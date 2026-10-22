@@ -427,7 +427,16 @@ else
         echo "Purging Yaru packages: $YARU_PKGS"
         # shellcheck disable=SC2086
         apt-get purge -y $YARU_PKGS
-        apt-get autoremove -y --purge
+        # Purging Yaru also drops the ubuntu-desktop metapackages, which turns
+        # most of the desktop into "automatically installed" packages. Never
+        # autoremove here, and mark those packages manual so a later
+        # `apt autoremove` cannot strip gdm3/gnome-shell and friends either.
+        KEEP_PKGS=$(apt-get -s autoremove --purge 2>/dev/null | awk '/^Remv /{print $2}' | tr '\n' ' ') || KEEP_PKGS=""
+        if [[ -n "$KEEP_PKGS" ]]; then
+            echo "Marking as manually installed so autoremove keeps them: $KEEP_PKGS"
+            # shellcheck disable=SC2086
+            apt-mark manual $KEEP_PKGS >/dev/null
+        fi
     else
         echo "No yaru-theme-* packages are installed."
     fi

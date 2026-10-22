@@ -1,20 +1,86 @@
 #!/usr/bin/env bash
 # Post-install setup for a fresh Ubuntu (GNOME) install.
-set -e
+# Run from a clone of the repo (it needs fonts/ and icons/): sudo ./ubuntu.sh
+set -eE
 
+if [[ -z "${BASH_VERSION:-}" ]]; then
+    echo "Run this script with bash, not sh: sudo ./ubuntu.sh"
+    exit 1
+fi
 if [[ $EUID -ne 0 ]]; then
     echo "Run this script with sudo: sudo ./ubuntu.sh"
     exit 1
 fi
+# The prompts are read from the terminal, so `curl ... | sudo bash` can't work.
+if [[ ! -t 1 ]] || ! { : </dev/tty; } 2>/dev/null; then
+    echo "This script needs an interactive terminal (it asks questions). Clone the repo and run: sudo ./ubuntu.sh"
+    exit 1
+fi
 
 USERNAME=$(logname)
+USER_UID=$(id -u "$USERNAME")
+USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DEBIAN_FRONTEND=noninteractive
+
+if [[ ! -d "$REPO_DIR/fonts/fira" || ! -d "$REPO_DIR/icons" ]]; then
+    echo "fonts/ and icons/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
+    exit 1
+fi
+
+# Everything the script prints also goes to a log, so a failed run can be diagnosed.
+LOG=/var/log/ubuntu-postinstall.log
+exec > >(tee -a "$LOG") 2>&1
+echo "=== ubuntu.sh started $(date -Is) (log: $LOG)"
+
+# With `set -e` a failing command silently ends the script; say where it died.
+trap 'echo; echo "ERROR: ubuntu.sh stopped at line $LINENO: $BASH_COMMAND (see $LOG)" >&2' ERR
 
 . /etc/os-release
 CODENAME="${VERSION_CODENAME}"
 
 VIRT=$(systemd-detect-virt 2>/dev/null) || VIRT=none
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+# ask_yesno VAR "question": sets VAR to yes or no (Enter = yes). Reads the
+# terminal directly so the answer can't be swallowed by a pipe or redirect.
+ask_yesno() {
+    local var=$1 question=$2 answer
+    while true; do
+        read -rp "$question [Y/n]: " answer </dev/tty
+        case "${answer,,}" in
+            ''|y|yes) printf -v "$var" '%s' yes; return 0 ;;
+            n|no)     printf -v "$var" '%s' no;  return 0 ;;
+            *)        echo "Please answer y or n." ;;
+        esac
+    done
+}
+
+# as_user CMD...: run a command as the login user with a D-Bus session, so
+# gsettings/gnome-extensions write to that user's dconf. Uses the user's live
+# session bus when one exists (changes apply immediately), otherwise a
+# throwaway bus (changes apply at next login).
+USER_BUS="/run/user/$USER_UID/bus"
+as_user() {
+    if [[ -S "$USER_BUS" ]]; then
+        sudo -u "$USERNAME" -H env XDG_RUNTIME_DIR="/run/user/$USER_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_BUS" "$@"
+    else
+        sudo -u "$USERNAME" -H dbus-run-session -- "$@"
+    fi
+}
+
+# user_gsettings SCHEMA KEY VALUE: set a gsettings key for the login user and
+# report it, so a write that didn't land is visible in the log.
+user_gsettings() {
+    if as_user gsettings set "$1" "$2" "$3"; then
+        echo "gsettings: $1 $2 = $(as_user gsettings get "$1" "$2" 2>/dev/null || echo '?')"
+    else
+        echo "WARNING: could not set $1 $2 for $USERNAME"
+    fi
+}
 
 # ============================================================
 # PROMPTS
@@ -22,10 +88,25 @@ VIRT=$(systemd-detect-virt 2>/dev/null) || VIRT=none
 echo
 lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINTS
 echo
-read -rp "NTFS partition to mount at /mnt/HOME (e.g. /dev/nvme1n1p1, blank to skip): " NTFS_DRIVE
-read -rp "Install the development stack (node, JDK, Angular CLI, Docker, Postman)? [Y/n]: " INSTALL_DEV
-read -rp "Install the gaming stack (wine, winetricks, lutris)? [Y/n]: " INSTALL_GAMING
-read -rp "Replace Ubuntu's Yaru theme with stock GNOME Adwaita (keeps Yaru's orange folder icons)? [Y/n]: " INSTALL_ADWAITA
+read -rp "NTFS partition to mount at /mnt/HOME (e.g. /dev/nvme1n1p1, blank to skip): " NTFS_DRIVE </dev/tty
+case "${NTFS_DRIVE,,}" in n|no|none|skip) NTFS_DRIVE="" ;; esac
+ask_yesno INSTALL_DEV     "Install the development stack (node, JDK, Angular CLI, Docker, Postman)?"
+ask_yesno INSTALL_GAMING  "Install the gaming stack (wine, winetricks, lutris)?"
+ask_yesno INSTALL_ADWAITA "Replace Ubuntu's Yaru theme with stock GNOME Adwaita (keeps Yaru's orange folder icons)?"
+
+echo
+echo "Summary:"
+echo "  NTFS drive to mount : ${NTFS_DRIVE:-none}"
+echo "  Development stack   : $INSTALL_DEV"
+echo "  Gaming stack        : $INSTALL_GAMING"
+echo "  Yaru -> Adwaita     : $INSTALL_ADWAITA"
+echo "  Logged-in user      : $USERNAME"
+echo
+ask_yesno CONFIRM "Proceed with these choices?"
+if [[ "$CONFIRM" != yes ]]; then
+    echo "Aborted — nothing was changed."
+    exit 0
+fi
 
 # ============================================================
 # BASE UPDATE
@@ -87,8 +168,8 @@ apt-get install -y google-chrome-stable code
 # ============================================================
 # GAMING STACK (optional)
 # ============================================================
-if [[ "$INSTALL_GAMING" =~ ^[Nn] ]]; then
-    echo "Skipping the gaming stack."
+if [[ "$INSTALL_GAMING" != yes ]]; then
+    echo "Skipping the gaming stack (answered '$INSTALL_GAMING')."
 else
     dpkg --add-architecture i386
 
@@ -137,8 +218,8 @@ apt-get purge -y gnome-software-plugin-flatpak gnome-software-plugin-snap 2>/dev
 # ============================================================
 # DEVELOPMENT STACK (optional)
 # ============================================================
-if [[ "$INSTALL_DEV" =~ ^[Nn] ]]; then
-    echo "Skipping the development stack."
+if [[ "$INSTALL_DEV" != yes ]]; then
+    echo "Skipping the development stack (answered '$INSTALL_DEV')."
 else
     apt-get install -y build-essential pkg-config
 
@@ -189,7 +270,13 @@ sudo -u "$USERNAME" -H git config --global core.pager >/dev/null 2>&1 \
 # ============================================================
 # BATTERY CHARGE THRESHOLD (80%)
 # ============================================================
-cat > /etc/systemd/system/battery-charge-threshold.service <<'EOF'
+# Only on real hardware with a battery that exposes a threshold control.
+if [[ "$VIRT" != none ]]; then
+    echo "Running in a VM ($VIRT) — skipping the battery charge threshold."
+elif ! compgen -G "/sys/class/power_supply/BAT*/charge_control_end_threshold" >/dev/null; then
+    echo "No battery with a charge threshold control — skipping the battery charge threshold."
+else
+    cat > /etc/systemd/system/battery-charge-threshold.service <<'EOF'
 [Unit]
 Description=Set battery charge threshold
 After=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
@@ -202,9 +289,10 @@ ExecStart=/usr/bin/bash -c 'echo 80 | tee /sys/class/power_supply/BAT*/charge_co
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 EOF
-systemctl daemon-reload
-systemctl enable battery-charge-threshold.service
-systemctl start battery-charge-threshold.service || true
+    systemctl daemon-reload
+    systemctl enable battery-charge-threshold.service
+    systemctl start battery-charge-threshold.service || true
+fi
 
 # ============================================================
 # SILENT + FAST BOOT
@@ -296,8 +384,8 @@ install_spotify || echo "Spotify/spotify-adblock install failed — skipping. (D
 # ============================================================
 # Yaru's orange folder icons are kept: they are copied into a small icon
 # theme that inherits everything else from Adwaita, before Yaru is purged.
-if [[ "$INSTALL_ADWAITA" =~ ^[Nn] ]]; then
-    echo "Keeping Ubuntu's Yaru theme."
+if [[ "$INSTALL_ADWAITA" != yes ]]; then
+    echo "Keeping Ubuntu's Yaru theme (answered '$INSTALL_ADWAITA')."
 else
     # Stock GNOME session and theme bits first, so purging Yaru (which takes
     # ubuntu-session with it) can never leave gdm3 without a session manager.
@@ -334,23 +422,39 @@ else
 
     # Purge every installed yaru-theme-* package (ubuntu-session goes with them).
     YARU_PKGS=$(dpkg-query -W -f='${Package} ${db:Status-Status}\n' 'yaru-theme-*' 2>/dev/null \
-        | awk '$2 == "installed" {print $1}') || YARU_PKGS=""
+        | awk '$2 == "installed" {print $1}' | tr '\n' ' ') || YARU_PKGS=""
     if [[ -n "$YARU_PKGS" ]]; then
+        echo "Purging Yaru packages: $YARU_PKGS"
         # shellcheck disable=SC2086
         apt-get purge -y $YARU_PKGS
+        apt-get autoremove -y --purge
+    else
+        echo "No yaru-theme-* packages are installed."
+    fi
+    YARU_LEFT=$(dpkg-query -W -f='${Package} ${db:Status-Status}\n' 'yaru-theme-*' 2>/dev/null \
+        | awk '$2 == "installed" {print $1}' | tr '\n' ' ') || YARU_LEFT=""
+    if [[ -n "$YARU_LEFT" ]]; then
+        echo "WARNING: Yaru packages still installed after purge: $YARU_LEFT"
+    else
+        echo "Yaru theme removed."
+    fi
+    # Purging yaru-theme-gnome-shell takes ubuntu-session with it; without this
+    # the user's saved session type ('ubuntu') no longer exists and GDM would
+    # fall back on its own, but say so explicitly.
+    if [[ -f /var/lib/AccountsService/users/$USERNAME ]]; then
+        sed -i 's/^XSession=ubuntu$/XSession=gnome/' "/var/lib/AccountsService/users/$USERNAME"
+        sed -i 's/^Session=ubuntu$/Session=gnome/' "/var/lib/AccountsService/users/$USERNAME"
     fi
 
     # Keep Ubuntu's dock: the stock GNOME session doesn't enable it by itself.
     apt-get install -y gnome-shell-extension-ubuntu-dock
-    sudo -u "$USERNAME" -H dbus-run-session -- gnome-extensions enable ubuntu-dock@ubuntu.com \
+    as_user gnome-extensions enable ubuntu-dock@ubuntu.com \
         || echo "Could not enable ubuntu-dock — enable it in the Extensions app."
 
-    sudo -u "$USERNAME" -H dbus-run-session -- bash <<EOF
-gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita'
-gsettings set org.gnome.desktop.interface icon-theme '$ICON_THEME'
-gsettings set org.gnome.desktop.interface cursor-theme 'Adwaita'
-gsettings set org.gnome.desktop.sound theme-name 'freedesktop'
-EOF
+    user_gsettings org.gnome.desktop.interface gtk-theme 'Adwaita'
+    user_gsettings org.gnome.desktop.interface icon-theme "$ICON_THEME"
+    user_gsettings org.gnome.desktop.interface cursor-theme 'Adwaita'
+    user_gsettings org.gnome.desktop.sound theme-name 'freedesktop'
 fi
 
 # ============================================================
@@ -393,19 +497,24 @@ apt-get install -y \
     fonts-liberation fonts-dejavu fonts-font-awesome fonts-jetbrains-mono
 
 # Fira Sans from fonts/fira (no Debian package exists).
-mkdir -p /usr/share/fonts/truetype/fira
-cp "$REPO_DIR"/fonts/fira/*.ttf /usr/share/fonts/truetype/fira/
+install -d -m 0755 /usr/share/fonts/truetype/fira
+install -m 0644 "$REPO_DIR"/fonts/fira/*.ttf /usr/share/fonts/truetype/fira/
+echo "Installed $(ls /usr/share/fonts/truetype/fira/*.ttf | wc -l) Fira Sans files."
 
 # Microsoft fonts from fonts/microsoft (Calibri, Cambria, Consolas, Tahoma, Segoe icons).
-mkdir -p /usr/share/fonts/truetype/microsoft
-cp "$REPO_DIR"/fonts/microsoft/*.tt[cf] /usr/share/fonts/truetype/microsoft/
+install -d -m 0755 /usr/share/fonts/truetype/microsoft
+install -m 0644 "$REPO_DIR"/fonts/microsoft/*.tt[cf] /usr/share/fonts/truetype/microsoft/
 fc-cache -f
 
-sudo -u "$USERNAME" -H dbus-run-session -- bash <<'EOF'
-gsettings set org.gnome.desktop.interface font-name 'Fira Sans Book 12'
-gsettings set org.gnome.desktop.interface document-font-name 'Fira Sans Book 12'
-gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Fira Sans Bold 12'
-EOF
+if fc-list : family | grep -q '^Fira Sans'; then
+    echo "fontconfig sees Fira Sans: $(fc-match 'Fira Sans Book')"
+else
+    echo "WARNING: fontconfig does not list Fira Sans — the font settings below will fall back to the default font."
+fi
+
+user_gsettings org.gnome.desktop.interface font-name 'Fira Sans Book 12'
+user_gsettings org.gnome.desktop.interface document-font-name 'Fira Sans Book 12'
+user_gsettings org.gnome.desktop.wm.preferences titlebar-font 'Fira Sans Bold 12'
 
 # ============================================================
 # UBUNTU BRANDING (Plymouth splash)
@@ -422,22 +531,23 @@ fi
 # ============================================================
 # GDM GREETER (font + Ubuntu logo)
 # ============================================================
-# The login screen runs as the gdm user, so user gsettings don't reach it;
-# /etc/gdm3/greeter.dconf-defaults is compiled in by dpkg-reconfigure gdm3.
+# The login screen runs as the gdm user, so user gsettings don't reach it.
+# Debian/Ubuntu's gdm3 links /etc/gdm3/greeter.dconf-defaults into
+# /usr/share/gdm/dconf/ and compiles that directory into
+# /var/lib/gdm3/greeter-dconf-defaults with /usr/share/gdm/generate-config
+# (run when gdm starts). Edit the keyfile, then compile it right away.
 GREETER=/etc/gdm3/greeter.dconf-defaults
-GREETER_CHANGED=0
 # greeter_set SECTION KEY VALUE: replace the key, or add it under SECTION.
+# --follow-symlinks keeps the file a link if the package made it one.
 greeter_set() {
     local section=$1 key=$2 value=$3
-    grep -q "^$key=$value\$" "$GREETER" && return 0
     if grep -q "^$key=" "$GREETER"; then
-        sed -i "s|^$key=.*|$key=$value|" "$GREETER"
+        sed -i --follow-symlinks "s|^$key=.*|$key=$value|" "$GREETER"
     elif grep -q "^\[$section\]" "$GREETER"; then
-        sed -i "\|^\[$section\]|a $key=$value" "$GREETER"
+        sed -i --follow-symlinks "\|^\[$section\]|a $key=$value" "$GREETER"
     else
         printf '\n[%s]\n%s=%s\n' "$section" "$key" "$value" >> "$GREETER"
     fi
-    GREETER_CHANGED=1
 }
 if [[ -f "$GREETER" ]]; then
     greeter_set org/gnome/desktop/interface font-name "'Fira Sans Book 12'"
@@ -446,9 +556,25 @@ if [[ -f "$GREETER" ]]; then
     else
         echo "No /usr/share/plymouth/ubuntu-logo.png — GDM logo left as is."
     fi
-    if [[ $GREETER_CHANGED -eq 1 ]]; then
+    echo "GDM greeter keys now set in $GREETER:"
+    grep -E '^(font-name|logo)=' "$GREETER" || true
+
+    # Compile the keyfile directory into the greeter database now, instead of
+    # waiting for the next gdm start.
+    if [[ -x /usr/share/gdm/generate-config ]]; then
+        /usr/share/gdm/generate-config \
+            && echo "Compiled the GDM greeter defaults (/var/lib/gdm3/greeter-dconf-defaults)." \
+            || echo "WARNING: /usr/share/gdm/generate-config failed — GDM keeps its current font/logo."
+    else
         dpkg-reconfigure gdm3 \
-            || echo "dpkg-reconfigure gdm3 failed — the greeter keeps its current settings."
+            || echo "WARNING: dpkg-reconfigure gdm3 failed — GDM keeps its current font/logo."
+    fi
+    # The greeter's own dconf database outranks the compiled defaults; make
+    # sure it isn't pinning a font (it normally sets nothing).
+    GDM_HOME=$(getent passwd gdm | cut -d: -f6)
+    if [[ -n "$GDM_HOME" && -f "$GDM_HOME/.config/dconf/user" ]] \
+        && sudo -u gdm dbus-run-session -- dconf read /org/gnome/desktop/interface/font-name 2>/dev/null | grep -q .; then
+        sudo -u gdm dbus-run-session -- dconf reset /org/gnome/desktop/interface/font-name || true
     fi
 else
     echo "No $GREETER — skipped the GDM greeter settings."
@@ -484,7 +610,7 @@ install_ego_extension() {
     echo "$uuid"
 }
 if EXT_UUID=$(install_ego_extension 6358); then
-    sudo -u "$USERNAME" -H dbus-run-session -- gnome-extensions enable "$EXT_UUID" \
+    as_user gnome-extensions enable "$EXT_UUID" \
         || echo "Installed but could not enable $EXT_UUID — enable it in the Extensions app."
 else
     echo "Could not install 'Disable Workspace Switcher Overlay' (e.g.o #6358) — no build for this GNOME Shell?"
@@ -494,6 +620,11 @@ fi
 # DONE
 # ============================================================
 echo
-echo "INSTALLATION COMPLETE"
-echo " - Reboot to apply the silent/fast boot changes."
+echo "INSTALLATION COMPLETE  ($(date -Is), log: $LOG)"
+echo "  Development stack : $INSTALL_DEV"
+echo "  Gaming stack      : $INSTALL_GAMING"
+echo "  Yaru -> Adwaita   : $INSTALL_ADWAITA"
+echo "  Interface font    : $(as_user gsettings get org.gnome.desktop.interface font-name 2>/dev/null || echo unknown)"
+echo "  GTK theme         : $(as_user gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo unknown)"
+echo " - Reboot to apply the silent/fast boot changes and the GDM font/logo."
 echo " - Log out and back in for the docker group, fonts and theme changes to take effect."

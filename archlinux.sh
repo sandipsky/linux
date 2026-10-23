@@ -14,7 +14,7 @@ read -p "Full Name: " NAME
 read -p "Password: " PASSWORD
 read -p "Install the development stack (node, JDK, Angular CLI, Docker, Postman)? [Y/n]: " INSTALL_DEV
 read -p "Install the gaming stack (wine-staging, lutris)? [Y/n]: " INSTALL_GAMING
-read -p "Install the KDE Plasma desktop (minimal: Dolphin, Konsole, Ark, Gwenview, Okular, Kate, Spectacle)? [Y/n]: " INSTALL_KDE
+read -p "Install the KDE Plasma desktop (minimal: Dolphin, Konsole, Ark, Gwenview, Okular, KWrite, Spectacle)? [Y/n]: " INSTALL_KDE
 read -p "Install LibreOffice (only Writer, Calc, Impress in the launcher)? [Y/n]: " INSTALL_OFFICE
 read -p "Install the Plymouth boot splash (default theme, no distro logo)? [Y/n]: " INSTALL_PLYMOUTH
 read -p "Install VirtualBox (VM host + dkms modules + guest-additions ISO)? [Y/n]: " INSTALL_VBOX
@@ -612,7 +612,7 @@ else
         phonon-qt6-vlc qt6-multimedia-ffmpeg \
         xdg-user-dirs \
         dolphin kio-extras ffmpegthumbs kdegraphics-thumbnailers \
-        konsole ark gwenview okular kate spectacle
+        konsole ark gwenview okular kwrite spectacle
 
     systemctl enable sddm.service
 
@@ -654,6 +654,23 @@ gtk-font-name=Fira Sans 10
 gtk-icon-theme-name=breeze
 gtk-cursor-theme-name=breeze_cursors
 GTK4
+
+    # KWallet off: otherwise Chrome (and any Chromium browser) picks it as
+    # its password store and kwalletd pops a "create wallet" dialog on every
+    # launch. Browsers fall back to their basic store; plasma-nm saves Wi-Fi
+    # passwords as system connections instead.
+    cat <<'KWALLET' > /home/$USER/.config/kwalletrc
+[Wallet]
+Enabled=false
+KWALLET
+
+    # No Plasma login splash (the Breeze logo animation between SDDM and the
+    # desktop); Plymouth already covers boot, so go straight to the desktop.
+    cat <<'KSPLASH' > /home/$USER/.config/ksplashrc
+[KSplash]
+Engine=none
+Theme=None
+KSPLASH
     chown -R $USER:$USER /home/$USER/.config
 fi
 
@@ -721,9 +738,6 @@ else
         usermod -aG vboxusers "$USER"
     fi
 
-    # virtualbox depends on qt6-tools, which ships launcher entries for Qt
-    # Assistant, Qt Widgets Designer, Qt Linguist and Qt D-Bus Viewer.
-    hide_desktop_entry assistant.desktop designer.desktop linguist.desktop qdbusviewer.desktop
 fi
 
 # ============================================================
@@ -771,7 +785,20 @@ if (( \${#MISSING_PKGS[@]} )); then
 fi
 
 # ============================================================
-# DNS (optional) - Cloudflare via systemd-resolved
+# LAUNCHER CLEANUP
+# ============================================================
+# Developer tools and utilities that arrive as dependencies and clutter the
+# app grid. Runs after every install step so it catches an entry no matter
+# which package pulled it in; missing files are skipped.
+hide_desktop_entry \
+    org.kde.plasma.emojier.desktop org.kde.kmenuedit.desktop \
+    vim.desktop \
+    lstopo.desktop \
+    qv4l2.desktop qvidcap.desktop \
+    assistant.desktop designer.desktop linguist.desktop qdbusviewer.desktop
+
+# ============================================================
+# DNS - Cloudflare via systemd-resolved
 # ============================================================
 # Some routers hand out dead DNS servers via DHCP; glibc tries nameservers in
 # order with a 5 s timeout, so with no local cache every lookup stalls.

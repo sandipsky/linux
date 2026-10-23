@@ -30,6 +30,42 @@ mkdir -p /mnt/boot
 mount "$EFI" /mnt/boot
 
 # ============================================================
+# MIRRORS
+# ============================================================
+# The live ISO ships a worldwide, unranked mirrorlist, so pacstrap often
+# pulls from a mirror half a planet away. Rank nearby HTTPS mirrors by
+# measured download rate with reflector (on the ISO), and pin the Nepali
+# mirror at the top since this machine lives in Nepal. pacstrap copies this
+# mirrorlist into the installed system, so it is ranked once here and the
+# chroot inherits it. Falls back to a static regional list if reflector
+# can't reach archlinux.org.
+NEPAL_MIRROR='Server = https://mirrors.nepalicloud.com/archlinux/$repo/os/$arch'
+if reflector --country Nepal,India,Bangladesh,Singapore --protocol https \
+        --completion-percent 100 --age 12 --sort rate \
+        --save /etc/pacman.d/mirrorlist.reflector; then
+    { echo "$NEPAL_MIRROR"
+      grep -v -F "$NEPAL_MIRROR" /etc/pacman.d/mirrorlist.reflector
+    } > /etc/pacman.d/mirrorlist
+    rm /etc/pacman.d/mirrorlist.reflector
+else
+    echo "WARNING: reflector failed; using a static regional mirrorlist."
+    cat <<MIRRORS > /etc/pacman.d/mirrorlist
+$NEPAL_MIRROR
+Server = https://mirror.xeonbd.com/archlinux/\$repo/os/\$arch
+Server = https://mirror.limda.net/archlinux/\$repo/os/\$arch
+Server = https://in.mirrors.cicku.me/archlinux/\$repo/os/\$arch
+Server = https://mirror.sahil.world/archlinux/\$repo/os/\$arch
+Server = https://mirror.4v1.in/archlinux/\$repo/os/\$arch
+Server = https://mirror.sg.cdn-perfprod.com/archlinux/\$repo/os/\$arch
+MIRRORS
+fi
+echo "Mirrors in use:"; grep ^Server /etc/pacman.d/mirrorlist | head -5
+
+# Fetch several packages at once on the live ISO too (pacstrap uses the
+# host pacman.conf for downloads).
+sed -i 's/^#\?ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf
+
+# ============================================================
 # BASE ARCH
 # ============================================================
 pacman -Syy --noconfirm archlinux-keyring
@@ -210,6 +246,7 @@ SNDPM
 # MULTILIB
 # ============================================================
 sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
+sed -i 's/^#\?ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf
 pacman -Syy --noconfirm
 
 # ============================================================

@@ -397,7 +397,6 @@ declare -A ICON_OVERRIDES=(
     [org.gnome.Evince.desktop]=org.gnome.Evince.svg
     [org.gnome.Papers.desktop]=org.gnome.Evince.svg
     [org.gnome.Software.desktop]=org.gnome.Software.svg
-    [org.gnome.Nautilus.desktop]=org.gnome.Nautilus.svg
 )
 for desktop in "${!ICON_OVERRIDES[@]}"; do
     src="/usr/share/applications/$desktop"

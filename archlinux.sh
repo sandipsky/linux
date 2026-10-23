@@ -18,7 +18,6 @@ read -p "Install the KDE Plasma desktop (minimal: Dolphin, Konsole, Ark, Gwenvie
 read -p "Install LibreOffice (only Writer, Calc, Impress in the launcher)? [Y/n]: " INSTALL_OFFICE
 read -p "Install the Plymouth boot splash (default theme, no distro logo)? [Y/n]: " INSTALL_PLYMOUTH
 read -p "Install VirtualBox (VM host + dkms modules + guest-additions ISO)? [Y/n]: " INSTALL_VBOX
-read -p "Use Cloudflare DNS via systemd-resolved (skips dead router DNS servers)? [Y/n]: " INSTALL_DNS
 
 # ============================================================
 # FILESYSTEM
@@ -745,19 +744,15 @@ fi
 # won't resolve (mDNS/.local via Avahi is unaffected). /etc/resolv.conf is
 # pointed at resolved's stub after the chroot: arch-chroot bind-mounts the
 # live ISO's resolv.conf over it in here, so it can't be replaced yet.
-if [[ "$INSTALL_DNS" =~ ^[Nn] ]]; then
-    echo "Skipping the DNS setup."
-else
-    mkdir -p /etc/systemd/resolved.conf.d
-    cat <<'DNSCONF' > /etc/systemd/resolved.conf.d/10-global-dns.conf
+mkdir -p /etc/systemd/resolved.conf.d
+cat <<'DNSCONF' > /etc/systemd/resolved.conf.d/10-global-dns.conf
 # Prefer these resolvers on every network (Domains=~. outranks per-link
 # DHCP-provided DNS), so dead router DNS servers are never consulted.
 [Resolve]
 DNS=1.1.1.1 1.0.0.1 2606:4700:4700::1111 2606:4700:4700::1001
 Domains=~.
 DNSCONF
-    systemctl enable systemd-resolved.service
-fi
+systemctl enable systemd-resolved.service
 
 # ============================================================
 # SERVICES
@@ -795,9 +790,7 @@ rm /mnt/next.sh
 # Every app, including browsers that read resolv.conf directly (Chromium),
 # goes through resolved's cache. Done out here because arch-chroot
 # bind-mounts the live ISO's /etc/resolv.conf into the chroot.
-if [[ ! "$INSTALL_DNS" =~ ^[Nn] ]]; then
-    ln -sf ../run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
-fi
+ln -sf ../run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
 
 # ============================================================
 # DONE

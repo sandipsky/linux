@@ -92,14 +92,12 @@ read -rp "NTFS partition to mount at /mnt/HOME (e.g. /dev/nvme1n1p1, blank to sk
 case "${NTFS_DRIVE,,}" in n|no|none|skip) NTFS_DRIVE="" ;; esac
 ask_yesno INSTALL_DEV     "Install the development stack (node, JDK, Angular CLI, Docker, Postman)?"
 ask_yesno INSTALL_GAMING  "Install the gaming stack (wine, winetricks, lutris)?"
-ask_yesno INSTALL_ADWAITA "Replace Ubuntu's Yaru theme with stock GNOME Adwaita (keeps Yaru's orange folder icons)?"
 
 echo
 echo "Summary:"
 echo "  NTFS drive to mount : ${NTFS_DRIVE:-none}"
 echo "  Development stack   : $INSTALL_DEV"
 echo "  Gaming stack        : $INSTALL_GAMING"
-echo "  Yaru -> Adwaita     : $INSTALL_ADWAITA"
 echo "  Logged-in user      : $USERNAME"
 echo
 ask_yesno CONFIRM "Proceed with these choices?"
@@ -380,93 +378,6 @@ echo "Installing Spotify with ad blocking..."
 install_spotify || echo "Spotify/spotify-adblock install failed — skipping. (Did Spotify rotate its apt signing key? Check https://www.spotify.com/download/linux/)"
 
 # ============================================================
-# STOCK GNOME THEME (optional) — Yaru -> Adwaita
-# ============================================================
-# Yaru's orange folder icons are kept: they are copied into a small icon
-# theme that inherits everything else from Adwaita, before Yaru is purged.
-if [[ "$INSTALL_ADWAITA" != yes ]]; then
-    echo "Keeping Ubuntu's Yaru theme (answered '$INSTALL_ADWAITA')."
-else
-    # Stock GNOME session and theme bits first, so purging Yaru (which takes
-    # ubuntu-session with it) can never leave gdm3 without a session manager.
-    apt-get install -y gnome-session gnome-backgrounds adwaita-icon-theme sound-theme-freedesktop
-    apt-get install -y adwaita-icon-theme-legacy 2>/dev/null || true
-
-    # Build "Adwaita-YaruFolders": Yaru's folder icons at every size, symlinks
-    # resolved, on top of Yaru's own index.theme pointed at Adwaita.
-    YARU_ICONS=/usr/share/icons/Yaru
-    FOLDER_THEME=/usr/share/icons/Adwaita-YaruFolders
-    ICON_THEME=Adwaita
-    if [[ -f "$YARU_ICONS/index.theme" ]]; then
-        rm -rf "$FOLDER_THEME"
-        mkdir -p "$FOLDER_THEME"
-        (cd "$YARU_ICONS" && find -L . \( -path '*/places/folder*' -o -path '*/places/user-home*' \
-                -o -path '*/places/user-desktop*' -o -path '*/mimetypes/inode-directory*' \) -type f 2>/dev/null) \
-        | while read -r f; do
-            mkdir -p "$FOLDER_THEME/$(dirname "$f")"
-            cp -L "$YARU_ICONS/$f" "$FOLDER_THEME/$f"
-        done
-        sed -e 's/^Name=.*/Name=Adwaita-YaruFolders/' \
-            -e 's/^Comment=.*/Comment=Adwaita with Yaru folder icons/' \
-            -e '/^Inherits=/d' \
-            -e 's/^\[Icon Theme\]$/[Icon Theme]\nInherits=Adwaita,hicolor/' \
-            "$YARU_ICONS/index.theme" > "$FOLDER_THEME/index.theme"
-        # Create every directory the index lists so none is missing.
-        grep -E '^(Scaled)?Directories=' "$FOLDER_THEME/index.theme" | cut -d= -f2- | tr ',' '\n' \
-        | while read -r d; do [[ -n "$d" ]] && mkdir -p "$FOLDER_THEME/$d"; done
-        gtk-update-icon-cache -q -t -f "$FOLDER_THEME" 2>/dev/null || true
-        ICON_THEME=Adwaita-YaruFolders
-    else
-        echo "Yaru icon theme not found — folder icons will be plain Adwaita."
-    fi
-
-    # Purge every installed yaru-theme-* package (ubuntu-session goes with them).
-    YARU_PKGS=$(dpkg-query -W -f='${Package} ${db:Status-Status}\n' 'yaru-theme-*' 2>/dev/null \
-        | awk '$2 == "installed" {print $1}' | tr '\n' ' ') || YARU_PKGS=""
-    if [[ -n "$YARU_PKGS" ]]; then
-        echo "Purging Yaru packages: $YARU_PKGS"
-        # shellcheck disable=SC2086
-        apt-get purge -y $YARU_PKGS
-        # Purging Yaru also drops the ubuntu-desktop metapackages, which turns
-        # most of the desktop into "automatically installed" packages. Never
-        # autoremove here, and mark those packages manual so a later
-        # `apt autoremove` cannot strip gdm3/gnome-shell and friends either.
-        KEEP_PKGS=$(apt-get -s autoremove --purge 2>/dev/null | awk '/^Remv /{print $2}' | tr '\n' ' ') || KEEP_PKGS=""
-        if [[ -n "$KEEP_PKGS" ]]; then
-            echo "Marking as manually installed so autoremove keeps them: $KEEP_PKGS"
-            # shellcheck disable=SC2086
-            apt-mark manual $KEEP_PKGS >/dev/null
-        fi
-    else
-        echo "No yaru-theme-* packages are installed."
-    fi
-    YARU_LEFT=$(dpkg-query -W -f='${Package} ${db:Status-Status}\n' 'yaru-theme-*' 2>/dev/null \
-        | awk '$2 == "installed" {print $1}' | tr '\n' ' ') || YARU_LEFT=""
-    if [[ -n "$YARU_LEFT" ]]; then
-        echo "WARNING: Yaru packages still installed after purge: $YARU_LEFT"
-    else
-        echo "Yaru theme removed."
-    fi
-    # Purging yaru-theme-gnome-shell takes ubuntu-session with it; without this
-    # the user's saved session type ('ubuntu') no longer exists and GDM would
-    # fall back on its own, but say so explicitly.
-    if [[ -f /var/lib/AccountsService/users/$USERNAME ]]; then
-        sed -i 's/^XSession=ubuntu$/XSession=gnome/' "/var/lib/AccountsService/users/$USERNAME"
-        sed -i 's/^Session=ubuntu$/Session=gnome/' "/var/lib/AccountsService/users/$USERNAME"
-    fi
-
-    # Keep Ubuntu's dock: the stock GNOME session doesn't enable it by itself.
-    apt-get install -y gnome-shell-extension-ubuntu-dock
-    as_user gnome-extensions enable ubuntu-dock@ubuntu.com \
-        || echo "Could not enable ubuntu-dock — enable it in the Extensions app."
-
-    user_gsettings org.gnome.desktop.interface gtk-theme 'Adwaita'
-    user_gsettings org.gnome.desktop.interface icon-theme "$ICON_THEME"
-    user_gsettings org.gnome.desktop.interface cursor-theme 'Adwaita'
-    user_gsettings org.gnome.desktop.sound theme-name 'freedesktop'
-fi
-
-# ============================================================
 # APP ICONS (icons/)
 # ============================================================
 ICON_DIR=/usr/share/icons/hicolor/scalable/apps
@@ -476,7 +387,7 @@ cp "$REPO_DIR"/icons/*.svg "$ICON_DIR/"
 cp "$REPO_DIR/icons/org.gnome.Evince.svg" "$ICON_DIR/org.gnome.Papers.svg"
 gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 
-# Yaru (if kept) outranks hicolor, so point the .desktop files at the SVGs directly
+# Yaru outranks hicolor, so point the .desktop files at the SVGs directly
 # via overrides in /usr/local/share/applications. Missing .desktop files are skipped.
 mkdir -p /usr/local/share/applications
 declare -A ICON_OVERRIDES=(
@@ -632,8 +543,6 @@ echo
 echo "INSTALLATION COMPLETE  ($(date -Is), log: $LOG)"
 echo "  Development stack : $INSTALL_DEV"
 echo "  Gaming stack      : $INSTALL_GAMING"
-echo "  Yaru -> Adwaita   : $INSTALL_ADWAITA"
 echo "  Interface font    : $(as_user gsettings get org.gnome.desktop.interface font-name 2>/dev/null || echo unknown)"
-echo "  GTK theme         : $(as_user gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo unknown)"
 echo " - Reboot to apply the silent/fast boot changes and the GDM font/logo."
 echo " - Log out and back in for the docker group, fonts and theme changes to take effect."

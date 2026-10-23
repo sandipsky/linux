@@ -565,20 +565,6 @@ fi
 echo "System extensions left: $(ls /usr/share/gnome-shell/extensions 2>/dev/null | tr '\n' ' ')"
 enable_extension ubuntu-dock@ubuntu.com || echo "Could not enable Ubuntu Dock — enable it in the Extensions app."
 
-# --- Bundled extensions (extensions/) -----------------------------------
-# "Favourites in AppGrid": GNOME hides dock-pinned apps from the app grid;
-# this keeps them there. Installed per user, like the one from e.g.o below.
-USER_EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions"
-for ext_src in "$REPO_DIR"/extensions/*/; do
-    [[ -f "$ext_src/metadata.json" ]] || continue
-    ext_uuid=$(basename "$ext_src")
-    sudo -u "$USERNAME" -H mkdir -p "$USER_EXT_DIR"
-    sudo -u "$USERNAME" -H rm -rf "${USER_EXT_DIR:?}/$ext_uuid"
-    sudo -u "$USERNAME" -H cp -r "$ext_src" "$USER_EXT_DIR/$ext_uuid"
-    enable_extension "$ext_uuid" \
-        || echo "Installed but could not enable $ext_uuid — enable it in the Extensions app."
-done
-
 # --- "Disable Workspace Switcher Overlay" (extensions.gnome.org #6358) ---
 install_ego_extension() {
     local pk=$1 shell_ver meta uuid url tmp

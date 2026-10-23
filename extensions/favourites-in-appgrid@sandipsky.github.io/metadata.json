@@ -1,0 +1,8 @@
+{
+  "uuid": "favourites-in-appgrid@sandipsky.github.io",
+  "name": "Favourites in AppGrid",
+  "description": "Keep apps that are pinned to the dock in the application grid as well.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/sandipsky/linux",
+  "version": 1
+}

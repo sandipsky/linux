@@ -510,9 +510,76 @@ else
 fi
 
 # ============================================================
-# GNOME SHELL EXTENSION
+# GNOME SHELL EXTENSIONS
 # ============================================================
-# "Disable Workspace Switcher Overlay" (extensions.gnome.org #6358).
+# enable_extension UUID: ask the running shell to enable it; if there is no
+# shell to ask (or it doesn't know the UUID yet), add it to the gsettings key
+# directly so it is enabled at next login.
+enable_extension() {
+    local uuid=$1 cur new
+    as_user gnome-extensions enable "$uuid" 2>/dev/null && return 0
+    cur=$(as_user gsettings get org.gnome.shell enabled-extensions 2>/dev/null) || cur="[]"
+    if [[ "$cur" == *"'$uuid'"* ]]; then
+        return 0
+    elif [[ "$cur" == "@as []" || "$cur" == "[]" ]]; then
+        new="['$uuid']"
+    else
+        new="${cur%]}, '$uuid']"
+    fi
+    as_user gsettings set org.gnome.shell enabled-extensions "$new"
+}
+
+# --- Remove every system extension except Ubuntu Dock -------------------
+# Each one is removed through its package. A package is left alone (and the
+# extension just stays disabled) if purging it would also pull out the
+# session, the shell, GDM, the dock or Yaru.
+KEEP_EXTENSIONS="ubuntu-dock@ubuntu.com"
+PROTECTED_PKGS='^(ubuntu-session|gnome-shell|gdm3|gnome-shell-extension-ubuntu-dock|yaru-theme-.*)$'
+for ext_dir in /usr/share/gnome-shell/extensions/*/; do
+    [[ -d "$ext_dir" ]] || continue
+    ext_uuid=$(basename "$ext_dir")
+    [[ " $KEEP_EXTENSIONS " == *" $ext_uuid "* ]] && continue
+    ext_pkg=$(dpkg -S "${ext_dir%/}/metadata.json" 2>/dev/null | cut -d: -f1 | head -1) || ext_pkg=""
+    if [[ -z "$ext_pkg" ]]; then
+        echo "Removing unpackaged system extension $ext_uuid"
+        rm -rf "$ext_dir"
+        continue
+    fi
+    would_remove=$(apt-get -s purge "$ext_pkg" 2>/dev/null | awk '/^(Remv|Purg) /{print $2}')
+    blocked=$(grep -E "$PROTECTED_PKGS" <<<"$would_remove" || true)
+    if [[ -n "$blocked" ]]; then
+        echo "Keeping $ext_pkg ($ext_uuid): removing it would also remove $(tr '\n' ' ' <<<"$blocked")"
+        continue
+    fi
+    echo "Removing $ext_uuid (package $ext_pkg)"
+    apt-get purge -y "$ext_pkg"
+done
+# Removing those may take the ubuntu-desktop metapackages with them; make sure
+# a later `apt autoremove` can't strip what they used to hold in place.
+KEEP_PKGS=$(apt-get -s autoremove --purge 2>/dev/null | awk '/^Remv /{print $2}' | tr '\n' ' ') || KEEP_PKGS=""
+if [[ -n "$KEEP_PKGS" ]]; then
+    echo "Marking as manually installed so autoremove keeps them: $KEEP_PKGS"
+    # shellcheck disable=SC2086
+    apt-mark manual $KEEP_PKGS >/dev/null
+fi
+echo "System extensions left: $(ls /usr/share/gnome-shell/extensions 2>/dev/null | tr '\n' ' ')"
+enable_extension ubuntu-dock@ubuntu.com || echo "Could not enable Ubuntu Dock — enable it in the Extensions app."
+
+# --- Bundled extensions (extensions/) -----------------------------------
+# "Favourites in AppGrid": GNOME hides dock-pinned apps from the app grid;
+# this keeps them there. Installed per user, like the one from e.g.o below.
+USER_EXT_DIR="$USER_HOME/.local/share/gnome-shell/extensions"
+for ext_src in "$REPO_DIR"/extensions/*/; do
+    [[ -f "$ext_src/metadata.json" ]] || continue
+    ext_uuid=$(basename "$ext_src")
+    sudo -u "$USERNAME" -H mkdir -p "$USER_EXT_DIR"
+    sudo -u "$USERNAME" -H rm -rf "${USER_EXT_DIR:?}/$ext_uuid"
+    sudo -u "$USERNAME" -H cp -r "$ext_src" "$USER_EXT_DIR/$ext_uuid"
+    enable_extension "$ext_uuid" \
+        || echo "Installed but could not enable $ext_uuid — enable it in the Extensions app."
+done
+
+# --- "Disable Workspace Switcher Overlay" (extensions.gnome.org #6358) ---
 install_ego_extension() {
     local pk=$1 shell_ver meta uuid url tmp
     shell_ver=$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
@@ -529,7 +596,7 @@ install_ego_extension() {
     echo "$uuid"
 }
 if EXT_UUID=$(install_ego_extension 6358); then
-    as_user gnome-extensions enable "$EXT_UUID" \
+    enable_extension "$EXT_UUID" \
         || echo "Installed but could not enable $EXT_UUID — enable it in the Extensions app."
 else
     echo "Could not install 'Disable Workspace Switcher Overlay' (e.g.o #6358) — no build for this GNOME Shell?"

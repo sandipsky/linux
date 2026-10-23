@@ -266,6 +266,39 @@ sudo -u "$USERNAME" -H git config --global core.pager >/dev/null 2>&1 \
     || sudo -u "$USERNAME" -H git config --global core.pager cat
 
 # ============================================================
+# ZSH / STARSHIP
+# ============================================================
+apt-get install -y zsh zsh-syntax-highlighting zsh-autosuggestions
+
+# starship is only in apt on newer releases; fall back to the official installer.
+if ! apt-get install -y starship 2>/dev/null; then
+    curl -fsSL https://starship.rs/install.sh | sh -s -- -y -b /usr/local/bin \
+        || echo "WARNING: could not install starship — install it manually from https://starship.rs"
+fi
+
+# Set zsh as default shell for user
+chsh -s /usr/bin/zsh "$USERNAME"
+
+cat <<'ZSHRC' > "$USER_HOME/.zshrc"
+source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+HISTFILE=~/.history
+HISTSIZE=10000
+SAVEHIST=50000
+
+setopt inc_append_history
+
+PROMPT_EOL_MARK=''
+
+export PATH="$PATH:$HOME/.local/bin"
+
+command -v starship >/dev/null && eval "$(starship init zsh)"
+ZSHRC
+
+chown "$USERNAME:$USERNAME" "$USER_HOME/.zshrc"
+
+# ============================================================
 # BATTERY CHARGE THRESHOLD (80%)
 # ============================================================
 # Only on real hardware with a battery that exposes a threshold control.
@@ -597,4 +630,4 @@ echo "  Development stack : $INSTALL_DEV"
 echo "  Gaming stack      : $INSTALL_GAMING"
 echo "  Interface font    : $(as_user gsettings get org.gnome.desktop.interface font-name 2>/dev/null || echo unknown)"
 echo " - Reboot to apply the silent/fast boot changes and the GDM font/logo."
-echo " - Log out and back in for the docker group, fonts and theme changes to take effect."
+echo " - Log out and back in for the docker group, zsh default shell, fonts and theme changes to take effect."

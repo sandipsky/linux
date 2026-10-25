@@ -165,6 +165,11 @@ aur_install() {
 # entries end with [Desktop Action] sections (an appended key would land in
 # the wrong section) and some carry an explicit NoDisplay=false that would
 # override an earlier NoDisplay=true (GKeyFile takes the last occurrence).
+# An entry whose package isn't installed yet (blueman, file-roller, uwsm, ...
+# come with hyprland.sh) gets a placeholder instead: a user-level file with
+# the same id masks the system entry the moment it appears, and Hidden=true
+# ("deleted at this level") needs no Exec. hyprland.sh swaps the placeholders
+# for real NoDisplay copies once the packages are in.
 USER_APPS=/home/$USER/.local/share/applications
 hide_desktop_entry() {
     local name src dest
@@ -172,14 +177,20 @@ hide_desktop_entry() {
     for name in "\$@"; do
         src="/usr/share/applications/\$name"
         dest="\$USER_APPS/\$name"
-        [[ -f "\$src" ]] || continue
-        cp "\$src" "\$dest"
-        if grep -q '^Actions=' "\$dest"; then
-            sed -i -e '/^Actions=/i # hidden by archlinux.sh' -e '/^Actions=/i NoDisplay=true' "\$dest"
+        if [[ -f "\$src" ]]; then
+            cp "\$src" "\$dest"
+            if grep -q '^Actions=' "\$dest"; then
+                sed -i -e '/^Actions=/i # hidden by archlinux.sh' -e '/^Actions=/i NoDisplay=true' "\$dest"
+            else
+                printf '%s\nNoDisplay=true\n' '# hidden by archlinux.sh' >> "\$dest"
+            fi
+            echo "hidden from launcher: \$name"
         else
-            printf '%s\nNoDisplay=true\n' '# hidden by archlinux.sh' >> "\$dest"
+            printf '%s\n[Desktop Entry]\nType=Application\nName=%s\nNoDisplay=true\nHidden=true\n' \
+                '# placeholder by archlinux.sh: hides this entry once its package is installed' \
+                "\${name%.desktop}" > "\$dest"
+            echo "hidden from launcher (placeholder, not installed yet): \$name"
         fi
-        echo "hidden from launcher: \$name"
     done
     chown -R $USER:$USER /home/$USER/.local
 }
@@ -587,6 +598,7 @@ pkg_install \
     qbittorrent \
     gvfs-mtp \
     ffmpegthumbnailer \
+    xdg-user-dirs \
     wget
 
 # ============================================================
@@ -610,7 +622,6 @@ else
         sddm sddm-kcm \
         kde-gtk-config breeze-gtk xdg-desktop-portal-kde \
         phonon-qt6-vlc qt6-multimedia-ffmpeg \
-        xdg-user-dirs \
         dolphin kio-extras ffmpegthumbs kdegraphics-thumbnailers \
         konsole ark gwenview okular kwrite spectacle
 
@@ -748,6 +759,29 @@ sudo -u "$USER" git config --global user.email "sandipshakya75@gmail.com"
 sudo -u "$USER" git config --global core.pager cat
 
 # ============================================================
+# HOME FOLDERS
+# ============================================================
+# The standard XDG user dirs (Documents, Downloads, Music, ...) plus
+# ~/Projects as an extra one: xdg-user-dirs-update only creates the standard
+# eight, but keeps local additions to user-dirs.dirs on its later runs, so the
+# XDG_PROJECTS_DIR line survives. The GTK bookmarks file gives Nautilus and
+# the GTK file chooser their sidebar folders; outside GNOME nothing seeds it
+# (xdg-user-dirs-gtk's autostart is OnlyShowIn=GNOME), so write it here.
+# Append-if-missing, so bookmarks added later are kept.
+sudo -u "$USER" -H xdg-user-dirs-update
+USER_DIRS=/home/$USER/.config/user-dirs.dirs
+grep -q '^XDG_PROJECTS_DIR=' "\$USER_DIRS" 2>/dev/null \
+    || echo 'XDG_PROJECTS_DIR="\$HOME/Projects"' >> "\$USER_DIRS"
+BOOKMARKS=/home/$USER/.config/gtk-3.0/bookmarks
+mkdir -p "\$(dirname "\$BOOKMARKS")"
+touch "\$BOOKMARKS"
+for dir in Documents Downloads Music Pictures Videos Projects; do
+    mkdir -p "/home/$USER/\$dir"
+    grep -qxF "file:///home/$USER/\$dir" "\$BOOKMARKS" || echo "file:///home/$USER/\$dir" >> "\$BOOKMARKS"
+done
+chown -R $USER:$USER /home/$USER
+
+# ============================================================
 # AUR APPS
 # ============================================================
 aur_install google-chrome visual-studio-code-bin
@@ -761,7 +795,9 @@ aur_install google-chrome visual-studio-code-bin
 # makepkg verifies the Spotify repo signature, so the signing key has to be
 # in the build user's keyring first. Best-effort: aur_install continues on
 # failure (did Spotify rotate its signing key? Compare the validpgpkeys line
-# in https://aur.archlinux.org/packages/spotify).
+# in https://aur.archlinux.org/packages/spotify). A stale pubring lock from
+# an interrupted gpg run would make the import hang, so clear it first.
+rm -f /home/$USER/.gnupg/public-keys.d/pubring.db.lock
 sudo -u "$USER" -H bash -c 'curl -sS https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.gpg | gpg --import -' \
     || echo "WARNING: could not import the Spotify signing key, the spotify build will fail"
 aur_install spotify spotify-adblock-git
@@ -789,13 +825,23 @@ fi
 # ============================================================
 # Developer tools and utilities that arrive as dependencies and clutter the
 # app grid. Runs after every install step so it catches an entry no matter
-# which package pulled it in; missing files are skipped.
+# which package pulled it in; entries not installed yet (the Qt developer
+# tools from qt6-tools, and blueman, file-roller, uwsm's uuctl, avahi, ...
+# that hyprland.sh brings in) get a placeholder, see hide_desktop_entry.
 hide_desktop_entry \
     org.kde.plasma.emojier.desktop org.kde.kmenuedit.desktop \
     vim.desktop \
-    lstopo.desktop \
+    lstopo.desktop cmake-gui.desktop \
     qv4l2.desktop qvidcap.desktop \
-    assistant.desktop designer.desktop linguist.desktop qdbusviewer.desktop
+    assistant.desktop designer.desktop linguist.desktop qdbusviewer.desktop \
+    java-java25-openjdk.desktop jconsole-java25-openjdk.desktop jshell-java25-openjdk.desktop \
+    avahi-discover.desktop bssh.desktop bvnc.desktop \
+    xgps.desktop xgpsspeed.desktop \
+    remote-viewer.desktop \
+    org.freedesktop.IBus.Setup.desktop \
+    blueman-adapters.desktop blueman-manager.desktop \
+    org.gnome.FileRoller.desktop \
+    uuctl.desktop
 
 # ============================================================
 # DNS - Cloudflare via systemd-resolved

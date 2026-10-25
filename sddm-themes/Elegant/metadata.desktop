@@ -1,0 +1,12 @@
+[SddmGreeterTheme]
+Name=Elegant
+Description=Login screen in the style of hypr-shell's lock screen on GDM's solid background.
+License=CC-BY-SA
+Type=sddm-theme
+Version=1.0
+MainScript=Main.qml
+ConfigFile=theme.conf
+TranslationsDirectory=translations
+Theme-Id=Elegant
+Theme-API=2.0
+QtVersion=6

@@ -31,7 +31,7 @@ USERNAME=$(id -un)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPS_DIR="$HOME/.local/share/applications"
 
-if [[ ! -d "$REPO_DIR/config/hypr" || ! -d "$REPO_DIR/sddm-themes/Elegant" || ! -d "$REPO_DIR/icons" || ! -d "$REPO_DIR/fonts/microsoft" ]]; then
+if [[ ! -d "$REPO_DIR/config/hypr" || ! -d "$REPO_DIR/sddm-themes/Elegant" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" ]]; then
     echo "config/, sddm-themes/, icons/ and fonts/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
     exit 1
 fi
@@ -59,7 +59,8 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # Compositor and session (uwsm), Wayland utilities, the GNOME apps used with
 # it, and the Adwaita GTK/icon themes (adwaita-icon-theme pulls in
 # adwaita-cursors, the cursor theme config/uwsm/env and gtk-3.0/settings.ini
-# select). luajit runs the Lua Hyprland config.
+# select). Adwaita's grey folder icons are swapped for Yaru's orange ones in
+# the FOLDER ICONS step below. luajit runs the Lua Hyprland config.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
@@ -212,6 +213,25 @@ sudo cp "$REPO_DIR"/icons/*.svg "$ICON_DIR/"
 sudo gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 
 # ============================================================
+# FOLDER ICONS (icons/folder)
+# ============================================================
+# Nautilus (and every GTK file chooser) shows Ubuntu's orange Yaru folders
+# instead of Adwaita's grey ones. icons/folder is a tiny icon theme that
+# carries only Yaru's places/ folder PNGs (folder, folder-open, the XDG user
+# dirs, user-home, user-desktop, ...) at every size and Inherits Adwaita, so
+# every other icon still comes from Adwaita. It is installed as its own
+# theme rather than into hicolor: Adwaita ships folder icons of its own, and
+# the lookup walks the selected theme first, then its parents, so hicolor
+# would never win. The DESKTOP SETTINGS step below selects it (gsettings),
+# as does config/gtk-3.0/settings.ini for GTK3.
+FOLDER_THEME_DIR=/usr/share/icons/Yaru-folders
+sudo rm -rf "$FOLDER_THEME_DIR"
+sudo cp -r "$REPO_DIR/icons/folder" "$FOLDER_THEME_DIR"
+sudo chown -R root:root "$FOLDER_THEME_DIR"
+sudo chmod -R u=rwX,go=rX "$FOLDER_THEME_DIR"
+sudo gtk-update-icon-cache -q -t -f "$FOLDER_THEME_DIR" 2>/dev/null || true
+
+# ============================================================
 # FONTS (fonts/microsoft)
 # ============================================================
 # Fira Sans, JetBrains Mono and the Noto family come from archlinux.sh;
@@ -275,6 +295,7 @@ update-desktop-database "$APPS_DIR" 2>/dev/null || true
 # .desktop overrides.
 dbus-run-session -- bash <<'EOF'
 gsettings set org.gnome.desktop.interface gtk-theme "Adwaita-dark"
+gsettings set org.gnome.desktop.interface icon-theme 'Yaru-folders'
 gsettings set org.gnome.desktop.interface font-name 'Fira Sans Book 12'
 gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
 gsettings set org.gnome.desktop.privacy remember-recent-files false

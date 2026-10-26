@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+# folder-preview FOLDER...: give each folder an icon that previews the first
+# image inside it (by name), drawn into Yaru's orange folder between its back
+# and a shortened front flap, the way Windows Explorer and Dolphin show
+# folders. The Nautilus extension folder-preview.py runs this for the folders
+# it shows; it works by hand too. Installed by hyprland.sh.
+#
+# The preview is a 256 px PNG in ~/.cache/folder-previews, set as the
+# folder's custom icon (metadata::custom-icon, the key Properties -> Set
+# Custom Icon writes). A folder that loses its last image gets its plain icon
+# back. Custom icons set by hand, home, the XDG user dirs and remote (gvfs)
+# folders are left alone.
+import fcntl
+import hashlib
+import os
+import sys
+
+from gi.repository import Gio, GLib
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
+
+ICON = "/usr/share/icons/Yaru-folders/256x256@2x/places/folder.png"
+CACHE = os.path.join(GLib.get_user_cache_dir(), "folder-previews")
+CACHE_URI = Gio.File.new_for_path(CACHE).get_uri() + "/"
+KEY = "metadata::custom-icon"
+IMAGES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif"}
+# Part of every preview's file name: bump it when the drawing changes so
+# existing previews get redrawn.
+VERSION = 1
+
+# Geometry of Yaru's 512 px folder.png.
+FRONT_TOP = 122        # no row above this belongs to the front flap
+CUT, DROP = 200, 125   # flat front rows [CUT, CUT + DROP) are cut out
+BACK_FILL = (162, 40, 5)
+CARD = (56, 108, 456, 330)
+PHOTO = (63, 115, 449, 300)
+CARD_FILL = (250, 250, 250)
+
+
+def ramp(lo, hi):
+    return lambda v: max(0, min(255, (v - lo) * 255 // (hi - lo)))
+
+
+def rounded(size, radius):
+    mask = Image.new("L", size)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius, fill=255)
+    return mask
+
+
+def make_layers():
+    icon = Image.open(ICON).convert("RGBA")
+    r, g, _, a = icon.split()
+    # The front flap is light orange (green ~91, red ~218) over the dark red
+    # back (green ~40); the back's edge highlight is as green as the flap
+    # but less red.
+    front_a = ImageChops.multiply(a, g.point(ramp(44, 91)))
+    front_a = ImageChops.multiply(front_a, r.point(ramp(192, 212)))
+    ImageDraw.Draw(front_a).rectangle((0, 0, icon.width, FRONT_TOP - 1), fill=0)
+    front = icon.copy()
+    front.putalpha(front_a)
+    # Shorten the flap by cutting flat rows out of its middle, so its top
+    # edge moves down and the photo shows above it.
+    short = Image.new("RGBA", icon.size)
+    short.paste(front.crop((0, CUT + DROP, icon.width, icon.height)), (0, CUT + DROP))
+    short.paste(front.crop((0, FRONT_TOP, icon.width, CUT)), (0, FRONT_TOP + DROP))
+    # The back, with the flap's old upper part painted over in back colour.
+    back = icon.copy()
+    fill = Image.new("RGBA", icon.size, BACK_FILL)
+    fill.putalpha(a)
+    box = (0, FRONT_TOP - 4, icon.width, 400)
+    back.paste(fill.crop(box), box[:2])
+    # A soft shadow of the flap's top edge on the photo.
+    shadow_a = short.getchannel("A").transform(icon.size, Image.Transform.AFFINE, (1, 0, 0, 0, 1, 6))
+    shadow_a = shadow_a.filter(ImageFilter.GaussianBlur(7)).point(lambda v: v * 45 // 100)
+    shadow = Image.new("RGBA", icon.size, "black")
+    shadow.putalpha(shadow_a)
+    return back, shadow, short
+
+
+layers = None
+
+
+def draw(image, target):
+    global layers
+    if layers is None:
+        layers = make_layers()
+    back, shadow, front = layers
+    size = (PHOTO[2] - PHOTO[0], PHOTO[3] - PHOTO[1])
+    with Image.open(image) as im:
+        im.draft("RGB", size)  # JPEGs decode at a fraction of full size
+        photo = ImageOps.exif_transpose(im)
+        photo = photo.convert("RGBA" if photo.has_transparency_data else "RGB")
+    # Cover-crop; tall images a little above centre, where faces usually are.
+    tall = photo.height * size[0] > photo.width * size[1]
+    photo = ImageOps.fit(photo, size, Image.Resampling.LANCZOS, centering=(0.5, 0.4 if tall else 0.5))
+    if photo.mode == "RGBA":
+        flat = Image.new("RGBA", size, CARD_FILL)
+        flat.alpha_composite(photo)
+        photo = flat
+    out = back.copy()
+    out.paste(CARD_FILL, CARD, rounded((CARD[2] - CARD[0], CARD[3] - CARD[1]), 12))
+    out.paste(photo.convert("RGB"), PHOTO[:2], rounded(size, 6))
+    out.alpha_composite(shadow)
+    out.alpha_composite(front)
+    tmp = target + ".tmp"
+    out.resize((256, 256), Image.Resampling.LANCZOS).save(tmp, "PNG")
+    os.replace(tmp, target)
+
+
+def images_in(path):
+    names = []
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if (not entry.name.startswith(".")
+                    and os.path.splitext(entry.name)[1].lower() in IMAGES
+                    and entry.is_file()):
+                names.append(entry.name)
+    names.sort(key=str.casefold)
+    return [os.path.join(path, name) for name in names]
+
+
+def refresh(path):
+    folder = Gio.File.new_for_path(path)
+    current = folder.query_info(KEY, Gio.FileQueryInfoFlags.NONE, None).get_attribute_string(KEY)
+    ours = current is not None and current.startswith(CACHE_URI)
+    if current and not ours:
+        return  # an icon set by hand
+    new, drawn = None, False
+    # Up to three tries, in case the first images can't be read.
+    for image in images_in(path)[:3]:
+        st = os.stat(image)
+        key = f"{VERSION}\0{image}\0{st.st_mtime_ns}\0{st.st_size}"
+        target = os.path.join(CACHE, hashlib.sha1(key.encode()).hexdigest() + ".png")
+        if not os.path.exists(target):
+            try:
+                draw(image, target)
+            except Exception as e:
+                print(f"folder-preview: {image}: {e}", file=sys.stderr)
+                continue
+            drawn = True
+        new = Gio.File.new_for_path(target).get_uri()
+        break
+    if new == current and not drawn:
+        return
+    if new:
+        folder.set_attribute_string(KEY, new, Gio.FileQueryInfoFlags.NONE, None)
+    else:
+        folder.set_attribute(KEY, Gio.FileAttributeType.INVALID, None, Gio.FileQueryInfoFlags.NONE, None)
+    if ours and current != new:
+        try:
+            os.remove(Gio.File.new_for_uri(current).get_path())
+        except OSError:
+            pass
+    # Nautilus doesn't see metadata changes. Setting the folder's timestamps
+    # to what they already are fires an attribute-change event, and Nautilus
+    # re-reads the folder's info, custom icon included.
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
+def main():
+    os.makedirs(CACHE, exist_ok=True)
+    user_dirs = [getattr(GLib.UserDirectory, name) for name in dir(GLib.UserDirectory)
+                 if name.startswith("DIRECTORY_")]
+    skip = {GLib.get_home_dir()} | {GLib.get_user_special_dir(d) for d in user_dirs}
+    remote = os.path.join(GLib.get_user_runtime_dir(), "gvfs") + os.sep
+    # One run at a time: a run queued behind a long one then finds the
+    # folders it shares with it already done.
+    with open(os.path.join(CACHE, ".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for path in map(os.path.abspath, sys.argv[1:]):
+            if path in skip or path.startswith(remote) or not os.path.isdir(path):
+                continue
+            try:
+                refresh(path)
+            except Exception as e:
+                print(f"folder-preview: {path}: {e}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

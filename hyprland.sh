@@ -22,8 +22,8 @@ USERNAME=$(id -un)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPS_DIR="$HOME/.local/share/applications"
 
-if [[ ! -d "$REPO_DIR/config/hypr" || ! -d "$REPO_DIR/sddm-themes/Elegant" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" ]]; then
-    echo "config/, sddm-themes/, icons/ and fonts/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
+if [[ ! -d "$REPO_DIR/config/hypr" || ! -d "$REPO_DIR/sddm-themes/Elegant" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" || ! -f "$REPO_DIR/nautilus/folder-preview" ]]; then
+    echo "config/, sddm-themes/, icons/, fonts/ and nautilus/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
     exit 1
 fi
 
@@ -52,8 +52,8 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # adwaita-cursors, the cursor theme config/uwsm/env and gtk-3.0/settings.ini
 # select). Adwaita's grey folder icons are swapped for Yaru's orange ones in
 # the FOLDER ICONS step below. luajit runs the Lua Hyprland config.
-# nautilus-python loads the right-click menu extension from the NAUTILUS
-# CONTEXT MENU step.
+# nautilus-python and python-pillow run the Nautilus extensions from the
+# NAUTILUS EXTENSIONS step.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
@@ -73,6 +73,7 @@ sudo pacman -S --noconfirm --needed \
     alacritty \
     nautilus \
     nautilus-python \
+    python-pillow \
     gnome-calculator \
     evince \
     loupe \
@@ -281,56 +282,25 @@ fi
 update-desktop-database "$APPS_DIR" 2>/dev/null || true
 
 # ============================================================
-# NAUTILUS CONTEXT MENU
+# NAUTILUS EXTENSIONS (nautilus/)
 # ============================================================
-# Nautilus has no "Open in Terminal" of its own (that used to come from
-# gnome-terminal's extension). This nautilus-python extension adds "Open in
-# Code" (VS Code, installed by archlinux.sh) and "Open in Terminal"
-# (Alacritty) to the right-click menu of the folder background and of a
-# selected folder; selected files get "Open in Code" only. An entry whose
-# program isn't installed is left out, and non-local places (Trash,
-# Recent, ...) get neither. Nautilus loads it at startup.
+# nautilus-python loads every .py in its extensions dir at startup:
+# - open-in.py: "Open in Code" (VS Code, installed by archlinux.sh) and "Open
+#   in Terminal" (Alacritty) in the right-click menu of the folder background
+#   and of a selected folder; selected files get "Open in Code" only. Nautilus
+#   has no "Open in Terminal" of its own (that used to come from
+#   gnome-terminal's extension).
+# - folder-preview.py: folder icons that preview the first image inside,
+#   drawn into the Yaru folder from the FOLDER ICONS step the way Windows
+#   Explorer and Dolphin show folders. It hands the folders Nautilus shows to
+#   ~/.local/bin/folder-preview, which draws the previews with Pillow into
+#   ~/.cache/folder-previews and sets them as the folders' custom icons.
+#   Images added to or removed from a folder show on its icon once that
+#   folder has been opened, or after F5 in the folder that contains it.
 NAUTILUS_EXT_DIR="$HOME/.local/share/nautilus-python/extensions"
 mkdir -p "$NAUTILUS_EXT_DIR"
-tee "$NAUTILUS_EXT_DIR/open-in.py" >/dev/null <<'EOF'
-# Written by hyprland.sh: "Open in Code" and "Open in Terminal" in
-# Nautilus' right-click menu.
-import shutil
-
-from gi.repository import GLib, GObject, Nautilus
-
-
-def launch(argv):
-    # Without DO_NOT_REAP_CHILD, GLib double-forks: the app is detached from
-    # Nautilus and leaves no zombie behind.
-    GLib.spawn_async(argv, flags=GLib.SpawnFlags.SEARCH_PATH)
-
-
-class OpenInExtension(GObject.GObject, Nautilus.MenuProvider):
-    def _items(self, paths, folder):
-        items = []
-        if shutil.which("code"):
-            item = Nautilus.MenuItem(name="OpenIn::Code", label="Open in Code")
-            item.connect("activate", lambda *_: launch(["code", *paths]))
-            items.append(item)
-        if folder and shutil.which("alacritty"):
-            item = Nautilus.MenuItem(name="OpenIn::Terminal", label="Open in Terminal")
-            item.connect("activate", lambda *_: launch(["alacritty", "--working-directory", folder]))
-            items.append(item)
-        return items
-
-    def get_file_items(self, files):
-        # get_path() is None for places with no local path (trash://, recent://).
-        paths = [f.get_location().get_path() for f in files]
-        if not paths or None in paths:
-            return []
-        folder = paths[0] if len(files) == 1 and files[0].is_directory() else None
-        return self._items(paths, folder)
-
-    def get_background_items(self, current_folder):
-        path = current_folder.get_location().get_path()
-        return self._items([path], path) if path else []
-EOF
+cp "$REPO_DIR"/nautilus/*.py "$NAUTILUS_EXT_DIR/"
+install -Dm755 "$REPO_DIR/nautilus/folder-preview" "$HOME/.local/bin/folder-preview"
 
 # ============================================================
 # DESKTOP SETTINGS

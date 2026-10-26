@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-# Hyprland desktop on top of a fresh archlinux.sh install.
-# Run as your normal user after archlinux.sh + reboot, from a clone of this
-# repo (it needs config/, sddm-themes/, icons/ and fonts/): ./hyprland.sh
-#
-# archlinux.sh already covers the base system and everything desktop-agnostic:
-# NVIDIA, zram, systemd-boot, Plymouth, yay, zsh + Starship, fonts (Fira Sans,
-# JetBrains Mono, Noto), VLC/OBS/qBittorrent, Chrome, VS Code, Spotify with
-# adblock, LibreOffice, VirtualBox, the dev/gaming stacks, DNS through
-# systemd-resolved, the hidden launcher entries and the home folders
-# (incl. ~/Projects). None of that is repeated here.
+
 set -e
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
@@ -106,14 +97,16 @@ curl -fsSL https://claude.ai/install.sh | bash
 # absolute path. The throwaway clone is removed afterwards; the dev checkout
 # at ~/Projects/hypr-shell is cloned by hand later — deliberately not part of
 # this script.
-HYPR_SHELL_REPO=https://github.com/sandipsky/hyprshell
+HYPR_SHELL_REPO=https://github.com/sandipsky/hypr-shell
 BUILD_DIR=$(mktemp -d)
-git clone --depth 1 "$HYPR_SHELL_REPO" "$BUILD_DIR/hyprshell"
-if [[ ! -x "$BUILD_DIR/hyprshell/install.sh" ]]; then
+git clone --depth 1 "$HYPR_SHELL_REPO" "$BUILD_DIR/hypr-shell"
+# Run through bash rather than ./install.sh: the repo tracks it as 100644, so
+# the clone has no exec bit.
+if [[ ! -f "$BUILD_DIR/hypr-shell/install.sh" ]]; then
     echo "ERROR: $HYPR_SHELL_REPO has no install.sh — nothing to build." >&2
     exit 1
 fi
-(cd "$BUILD_DIR/hyprshell" && ./install.sh)
+(cd "$BUILD_DIR/hypr-shell" && bash ./install.sh)
 rm -rf "${BUILD_DIR:?}"
 
 # ============================================================

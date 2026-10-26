@@ -317,6 +317,9 @@ install -Dm755 "$REPO_DIR/nautilus/folder-preview" "$HOME/.local/bin/folder-prev
 # The sort key is set for GTK 3 too, not just GTK 4: on its first start
 # Nautilus copies the GTK 3 value (default false) over the GTK 4 one
 # (migrated-gtk-settings), and the GTK 3 file chooser then matches as well.
+#
+# Text Editor: JetBrains Mono 13 (installed by archlinux.sh) instead of the
+# system font, line numbers and the current line highlighted.
 dbus-run-session -- bash <<'EOF'
 gsettings set org.gnome.desktop.interface gtk-theme "Adwaita-dark"
 gsettings set org.gnome.desktop.interface icon-theme 'Yaru-folders'
@@ -328,6 +331,10 @@ gsettings set org.gnome.nautilus.preferences show-create-link true
 gsettings set org.gnome.nautilus.preferences show-delete-permanently true
 gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true
 gsettings set org.gtk.Settings.FileChooser sort-directories-first true
+gsettings set org.gnome.TextEditor use-system-font false
+gsettings set org.gnome.TextEditor custom-font 'JetBrains Mono 13'
+gsettings set org.gnome.TextEditor show-line-numbers true
+gsettings set org.gnome.TextEditor highlight-current-line true
 EOF
 
 xdg-mime default org.gnome.Loupe.desktop image/jpeg

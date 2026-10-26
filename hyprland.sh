@@ -52,6 +52,8 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # adwaita-cursors, the cursor theme config/uwsm/env and gtk-3.0/settings.ini
 # select). Adwaita's grey folder icons are swapped for Yaru's orange ones in
 # the FOLDER ICONS step below. luajit runs the Lua Hyprland config.
+# nautilus-python loads the right-click menu extension from the NAUTILUS
+# CONTEXT MENU step.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
@@ -70,6 +72,7 @@ sudo pacman -S --noconfirm --needed \
     luajit \
     alacritty \
     nautilus \
+    nautilus-python \
     gnome-calculator \
     evince \
     loupe \
@@ -278,6 +281,58 @@ fi
 update-desktop-database "$APPS_DIR" 2>/dev/null || true
 
 # ============================================================
+# NAUTILUS CONTEXT MENU
+# ============================================================
+# Nautilus has no "Open in Terminal" of its own (that used to come from
+# gnome-terminal's extension). This nautilus-python extension adds "Open in
+# Code" (VS Code, installed by archlinux.sh) and "Open in Terminal"
+# (Alacritty) to the right-click menu of the folder background and of a
+# selected folder; selected files get "Open in Code" only. An entry whose
+# program isn't installed is left out, and non-local places (Trash,
+# Recent, ...) get neither. Nautilus loads it at startup.
+NAUTILUS_EXT_DIR="$HOME/.local/share/nautilus-python/extensions"
+mkdir -p "$NAUTILUS_EXT_DIR"
+tee "$NAUTILUS_EXT_DIR/open-in.py" >/dev/null <<'EOF'
+# Written by hyprland.sh: "Open in Code" and "Open in Terminal" in
+# Nautilus' right-click menu.
+import shutil
+
+from gi.repository import GLib, GObject, Nautilus
+
+
+def launch(argv):
+    # Without DO_NOT_REAP_CHILD, GLib double-forks: the app is detached from
+    # Nautilus and leaves no zombie behind.
+    GLib.spawn_async(argv, flags=GLib.SpawnFlags.SEARCH_PATH)
+
+
+class OpenInExtension(GObject.GObject, Nautilus.MenuProvider):
+    def _items(self, paths, folder):
+        items = []
+        if shutil.which("code"):
+            item = Nautilus.MenuItem(name="OpenIn::Code", label="Open in Code")
+            item.connect("activate", lambda *_: launch(["code", *paths]))
+            items.append(item)
+        if folder and shutil.which("alacritty"):
+            item = Nautilus.MenuItem(name="OpenIn::Terminal", label="Open in Terminal")
+            item.connect("activate", lambda *_: launch(["alacritty", "--working-directory", folder]))
+            items.append(item)
+        return items
+
+    def get_file_items(self, files):
+        # get_path() is None for places with no local path (trash://, recent://).
+        paths = [f.get_location().get_path() for f in files]
+        if not paths or None in paths:
+            return []
+        folder = paths[0] if len(files) == 1 and files[0].is_directory() else None
+        return self._items(paths, folder)
+
+    def get_background_items(self, current_folder):
+        path = current_folder.get_location().get_path()
+        return self._items([path], path) if path else []
+EOF
+
+# ============================================================
 # DESKTOP SETTINGS
 # ============================================================
 # Qt apps (OBS, qBittorrent, VirtualBox, VLC) are scaled to 125% globally via
@@ -286,12 +341,23 @@ update-desktop-database "$APPS_DIR" 2>/dev/null || true
 # `env` only covers its direct children) and get Fira Sans via
 # config/fontconfig/conf.d/50-hypr-shell-sans-serif.conf — no per-app
 # .desktop overrides.
+#
+# Nautilus: expandable folders in list view, "Create Link" and "Delete
+# Permanently" in the right-click menu, and folders sorted before files.
+# The sort key is set for GTK 3 too, not just GTK 4: on its first start
+# Nautilus copies the GTK 3 value (default false) over the GTK 4 one
+# (migrated-gtk-settings), and the GTK 3 file chooser then matches as well.
 dbus-run-session -- bash <<'EOF'
 gsettings set org.gnome.desktop.interface gtk-theme "Adwaita-dark"
 gsettings set org.gnome.desktop.interface icon-theme 'Yaru-folders'
 gsettings set org.gnome.desktop.interface font-name 'Fira Sans Book 12'
 gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
 gsettings set org.gnome.desktop.privacy remember-recent-files false
+gsettings set org.gnome.nautilus.list-view use-tree-view true
+gsettings set org.gnome.nautilus.preferences show-create-link true
+gsettings set org.gnome.nautilus.preferences show-delete-permanently true
+gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true
+gsettings set org.gtk.Settings.FileChooser sort-directories-first true
 EOF
 
 xdg-mime default org.gnome.Loupe.desktop image/jpeg

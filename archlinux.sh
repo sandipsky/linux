@@ -757,6 +757,12 @@ fi
 sudo -u "$USER" git config --global user.name "sandipsky"
 sudo -u "$USER" git config --global user.email "sandipshakya75@gmail.com"
 sudo -u "$USER" git config --global core.pager cat
+# Pushing over HTTPS needs a credential helper: with current curl, git drops
+# a token embedded in the clone URL after the first request of a push and
+# falls back to the helper. Clone as https://sandipsky:<token>@github.com/...
+# and the first push saves the token to ~/.git-credentials with no prompt;
+# a bare https://<token>@ URL isn't saved, so that push would ask instead.
+sudo -u "$USER" git config --global credential.helper store
 
 # ============================================================
 # HOME FOLDERS

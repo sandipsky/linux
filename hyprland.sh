@@ -417,7 +417,49 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
         echo "no ui.accent in hypr-shell's config.json — the theme's default applies"
     fi
 
-    # Select the theme. Arch ships no /etc/sddm.conf; drop-ins in
+    # The greeter's Xorg keeps running for the whole session after login, and
+    # left to autoconfigure it also opens the NVIDIA dGPU as a PRIME GPU
+    # screen, which keeps the dGPU out of runtime D3 (stuck in P0, ~13 W at
+    # 0% load, heating the shared heatpipes). Give that Xorg a config of its
+    # own (-config, via ServerArguments below) that drives only the boot GPU
+    # (the iGPU wired to the panel) and adds no other GPUs. Only SDDM's X
+    # server reads it, so other X servers still see both GPUs. Skipped
+    # without an NVIDIA dGPU (e.g. in a VM).
+    SDDM_XORG_CONF=/etc/X11/sddm-igpu.conf
+    IGPU_BUSID="" HAS_NVIDIA=""
+    for dev in /sys/bus/pci/devices/*; do
+        [[ "$(cat "$dev/class")" == 0x03* ]] || continue
+        if [[ "$(cat "$dev/vendor")" == 0x10de ]]; then
+            HAS_NVIDIA=1
+        elif [[ "$(cat "$dev/boot_vga" 2>/dev/null)" == 1 ]]; then
+            # 0000:00:02.0 -> PCI:0:2:0 (Xorg wants decimal bus:device:function)
+            IFS=':.' read -r _ bus slot func <<<"${dev##*/}"
+            IGPU_BUSID="PCI:$((16#$bus)):$((16#$slot)):$func"
+        fi
+    done
+    if [[ -n "$HAS_NVIDIA" && -n "$IGPU_BUSID" ]]; then
+        sudo tee "$SDDM_XORG_CONF" >/dev/null <<EOF
+# Written by hyprland.sh: SDDM's greeter Xorg (started with -config pointing
+# here, see /etc/sddm.conf.d/zz-hyprland.conf) drives only the iGPU, so it
+# doesn't keep the NVIDIA dGPU awake for the whole session.
+Section "ServerFlags"
+    Option "AutoAddGPU" "false"
+EndSection
+
+Section "Device"
+    Identifier "iGPU"
+    Driver     "modesetting"
+    BusID      "$IGPU_BUSID"
+EndSection
+EOF
+        SDDM_X11_ARGS="-nolisten tcp -config $SDDM_XORG_CONF"
+    else
+        sudo rm -f "$SDDM_XORG_CONF"
+        SDDM_X11_ARGS="-nolisten tcp"
+    fi
+
+    # Select the theme and the X server arguments (SDDM's default is
+    # -nolisten tcp). Arch ships no /etc/sddm.conf; drop-ins in
     # /etc/sddm.conf.d are read in name order with later files winning, and
     # the name has to sort after the kde_settings.conf archlinux.sh writes
     # when KDE was chosen too.
@@ -425,6 +467,9 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     sudo tee /etc/sddm.conf.d/zz-hyprland.conf >/dev/null <<EOF
 [Theme]
 Current=$THEME
+
+[X11]
+ServerArguments=$SDDM_X11_ARGS
 EOF
 
     # The greeter runs as the sddm user and can't read ~/.face inside a 0700

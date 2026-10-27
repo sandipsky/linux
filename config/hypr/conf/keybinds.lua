@@ -45,10 +45,12 @@ hl.bind(mainMod .. " + Z", hl.dsp.window.float({ action = "toggle" }))
 hl.bind("ALT + tab", hl.dsp.window.cycle_next())
 hl.bind(mainMod .. " + tab", hl.dsp.window.cycle_next())
 
-hl.bind(mainMod .. " + left",  hl.dsp.window.move({ direction = "left" }))
-hl.bind(mainMod .. " + right", hl.dsp.window.move({ direction = "right" }))
-hl.bind(mainMod .. " + up",    hl.dsp.window.move({ direction = "up" }))
-hl.bind(mainMod .. " + down",  hl.dsp.window.move({ direction = "down" }))
+hl.bind(mainMod .. " + left",  hl.dsp.focus({ workspace = "r-1" }))
+hl.bind(mainMod .. " + right", hl.dsp.focus({ workspace = "r+1" }))
+hl.bind(mainMod .. " + up",    hl.dsp.window.fullscreen({ mode = "maximized", action = "set" }))
+hl.bind(mainMod .. " + down",  hl.dsp.window.fullscreen({ mode = "maximized", action = "unset" }))
+hl.bind(mainMod .. " + ALT + left",  hl.dsp.window.move({ direction = "left" }))
+hl.bind(mainMod .. " + ALT + right", hl.dsp.window.move({ direction = "right" }))
 
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(),   { mouse = true })
 hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
@@ -62,7 +64,8 @@ hl.bind(mainMod .. " + SHIFT + down", hl.dsp.window.resize({ x = -100, y = 0, re
 
 for i = 1, 6 do
     hl.bind(mainMod .. " + " .. i,             hl.dsp.focus({ workspace = i }))
-    hl.bind(mainMod .. " + SHIFT + " .. i,     hl.dsp.window.move({ workspace = i, follow = true }))
+    hl.bind(mainMod .. " + SHIFT + " .. i,     hl.dsp.window.move({ workspace = i, follow = false }))
+    hl.bind("ALT + " .. i,                     hl.dsp.window.move({ workspace = i, follow = true }))
 end
 
 hl.bind(mainMod .. " + CTRL + left",  hl.dsp.focus({ workspace = "r-1" }))
@@ -71,16 +74,20 @@ hl.bind(mainMod .. " + CTRL + right", hl.dsp.focus({ workspace = "r+1" }))
 hl.bind(mainMod .. " + CTRL + h", hl.dsp.focus({ workspace = "r-1" }))
 hl.bind(mainMod .. " + CTRL + l", hl.dsp.focus({ workspace = "r+1" }))
 
-hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.window.move({ workspace = "r-1", follow = true }))
-hl.bind(mainMod .. " + SHIFT + right", hl.dsp.window.move({ workspace = "r+1", follow = true }))
+hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.window.move({ workspace = "r-1", follow = false }))
+hl.bind(mainMod .. " + SHIFT + right", hl.dsp.window.move({ workspace = "r+1", follow = false }))
 
-hl.bind(mainMod .. " + SHIFT + h", hl.dsp.window.move({ workspace = "r-1", follow = true }))
-hl.bind(mainMod .. " + SHIFT + l", hl.dsp.window.move({ workspace = "r+1", follow = true }))
+hl.bind(mainMod .. " + SHIFT + h", hl.dsp.window.move({ workspace = "r-1", follow = false }))
+hl.bind(mainMod .. " + SHIFT + l", hl.dsp.window.move({ workspace = "r+1", follow = false }))
+
+-- Alt+Left/Right also move the window; note this overrides back/forward in apps
+hl.bind("ALT + left",  hl.dsp.window.move({ workspace = "r-1", follow = true }))
+hl.bind("ALT + right", hl.dsp.window.move({ workspace = "r+1", follow = true }))
 
 hl.bind(mainMod .. " + mouse_down", hl.dsp.focus({ workspace = "r-1" }))
 hl.bind(mainMod .. " + mouse_up",   hl.dsp.focus({ workspace = "r+1" }))
-hl.bind(mainMod .. " + SHIFT + mouse_down", hl.dsp.window.move({ workspace = "r-1", follow = true }))
-hl.bind(mainMod .. " + SHIFT + mouse_up",   hl.dsp.window.move({ workspace = "r+1", follow = true }))
+hl.bind(mainMod .. " + SHIFT + mouse_down", hl.dsp.window.move({ workspace = "r-1", follow = false }))
+hl.bind(mainMod .. " + SHIFT + mouse_up",   hl.dsp.window.move({ workspace = "r+1", follow = false }))
 
 -- -----------------------------------------------------
 -- Actions

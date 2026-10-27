@@ -15,4 +15,4 @@ hl.animation({ leaf = "windowsOut",  enabled = true, speed = 7,  bezier = "defau
 hl.animation({ leaf = "border",      enabled = true, speed = 10, bezier = "default" })
 hl.animation({ leaf = "borderangle", enabled = true, speed = 8,  bezier = "default" })
 hl.animation({ leaf = "fade",        enabled = true, speed = 7,  bezier = "default" })
-hl.animation({ leaf = "workspaces",  enabled = true, speed = 6,  bezier = "default" })
+hl.animation({ leaf = "workspaces",  enabled = true, speed = 2,  bezier = "default", style = "fade" })

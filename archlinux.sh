@@ -14,7 +14,6 @@ read -p "Full Name: " NAME
 read -p "Password: " PASSWORD
 read -p "Install the development stack (node, JDK, Angular CLI, Docker, Postman)? [Y/n]: " INSTALL_DEV
 read -p "Install the gaming stack (wine-staging, lutris)? [Y/n]: " INSTALL_GAMING
-read -p "Install the KDE Plasma desktop (minimal: Dolphin, Konsole, Ark, Gwenview, Okular, KWrite, Spectacle)? [Y/n]: " INSTALL_KDE
 read -p "Install LibreOffice (only Writer, Calc, Impress in the launcher)? [Y/n]: " INSTALL_OFFICE
 read -p "Install the Plymouth boot splash (default theme, no distro logo)? [Y/n]: " INSTALL_PLYMOUTH
 read -p "Install VirtualBox (VM host + dkms modules + guest-additions ISO)? [Y/n]: " INSTALL_VBOX
@@ -602,90 +601,6 @@ pkg_install \
     wget
 
 # ============================================================
-# KDE PLASMA DESKTOP (optional)
-# ============================================================
-# plasma-desktop instead of the full plasma group: just the shell plus the
-# applets a laptop needs (audio, network, bluetooth, power, displays), SDDM
-# with its System Settings module, and a small set of apps. Fonts: Fira Sans
-# (installed above) for the UI, JetBrains Mono for monospace, applied to
-# Plasma/Qt via kdeglobals, to GTK apps via settings.ini (kde-gtk-config
-# keeps them in sync afterwards) and to the SDDM greeter.
-if [[ "$INSTALL_KDE" =~ ^[Nn] ]]; then
-    echo "Skipping KDE Plasma."
-else
-    # Explicit providers (phonon backend, Qt multimedia backend) so pacman
-    # doesn't have to pick one itself under --noconfirm.
-    pkg_install \
-        plasma-desktop \
-        plasma-pa plasma-nm bluedevil powerdevil kscreen \
-        plasma-systemmonitor \
-        sddm sddm-kcm \
-        kde-gtk-config breeze-gtk xdg-desktop-portal-kde \
-        phonon-qt6-vlc qt6-multimedia-ffmpeg \
-        dolphin kio-extras ffmpegthumbs kdegraphics-thumbnailers \
-        konsole ark gwenview okular kwrite spectacle
-
-    systemctl enable sddm.service
-
-    # SDDM: Breeze theme and the UI font (what sddm-kcm's "Apply Plasma
-    # Settings" would write).
-    mkdir -p /etc/sddm.conf.d
-    cat <<'SDDMCONF' > /etc/sddm.conf.d/kde_settings.conf
-[Theme]
-Current=breeze
-CursorTheme=breeze_cursors
-Font=Fira Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
-SDDMCONF
-
-    # Plasma/Qt fonts.
-    mkdir -p /home/$USER/.config/gtk-3.0 /home/$USER/.config/gtk-4.0
-    cat <<'KDEGLOBALS' > /home/$USER/.config/kdeglobals
-[General]
-font=Fira Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
-menuFont=Fira Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
-toolBarFont=Fira Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
-smallestReadableFont=Fira Sans,8,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
-fixed=JetBrains Mono,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1
-
-[WM]
-activeFont=Fira Sans,10,-1,5,700,0,0,0,0,0,0,0,0,0,0,1
-KDEGLOBALS
-
-    # GTK apps (Chrome, Lutris, ...) until kde-gtk-config takes over.
-    cat <<'GTK3' > /home/$USER/.config/gtk-3.0/settings.ini
-[Settings]
-gtk-font-name=Fira Sans 10
-gtk-theme-name=Breeze
-gtk-icon-theme-name=breeze
-gtk-cursor-theme-name=breeze_cursors
-GTK3
-    cat <<'GTK4' > /home/$USER/.config/gtk-4.0/settings.ini
-[Settings]
-gtk-font-name=Fira Sans 10
-gtk-icon-theme-name=breeze
-gtk-cursor-theme-name=breeze_cursors
-GTK4
-
-    # KWallet off: otherwise Chrome (and any Chromium browser) picks it as
-    # its password store and kwalletd pops a "create wallet" dialog on every
-    # launch. Browsers fall back to their basic store; plasma-nm saves Wi-Fi
-    # passwords as system connections instead.
-    cat <<'KWALLET' > /home/$USER/.config/kwalletrc
-[Wallet]
-Enabled=false
-KWALLET
-
-    # No Plasma login splash (the Breeze logo animation between SDDM and the
-    # desktop); Plymouth already covers boot, so go straight to the desktop.
-    cat <<'KSPLASH' > /home/$USER/.config/ksplashrc
-[KSplash]
-Engine=none
-Theme=None
-KSPLASH
-    chown -R $USER:$USER /home/$USER/.config
-fi
-
-# ============================================================
 # DEVELOPMENT STACK (optional)
 # ============================================================
 if [[ "$INSTALL_DEV" =~ ^[Nn] ]]; then
@@ -835,7 +750,6 @@ fi
 # tools from qt6-tools, and blueman, file-roller, uwsm's uuctl, avahi, ...
 # that hyprland.sh brings in) get a placeholder, see hide_desktop_entry.
 hide_desktop_entry \
-    org.kde.plasma.emojier.desktop org.kde.kmenuedit.desktop \
     vim.desktop \
     lstopo.desktop cmake-gui.desktop \
     qv4l2.desktop qvidcap.desktop \

@@ -489,9 +489,8 @@ EOF
 
     # Select the theme and the X server arguments (SDDM's default is
     # -nolisten tcp). Arch ships no /etc/sddm.conf; drop-ins in
-    # /etc/sddm.conf.d are read in name order with later files winning, and
-    # the name has to sort after the kde_settings.conf archlinux.sh writes
-    # when KDE was chosen too.
+    # /etc/sddm.conf.d are read in name order with later files winning, so the
+    # zz- prefix keeps these settings on top of any other drop-in.
     sudo mkdir -p /etc/sddm.conf.d
     sudo tee /etc/sddm.conf.d/zz-hyprland.conf >/dev/null <<EOF
 [Theme]

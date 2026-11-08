@@ -356,6 +356,46 @@ if [[ -f "$REPO_DIR/profile.png" ]]; then
 fi
 
 # ============================================================
+# GPU DETECTION (hybrid Intel + NVIDIA)
+# ============================================================
+# Finds the boot GPU (the iGPU wired to the panel) and whether an NVIDIA dGPU
+# is present. Used by the iGPU symlink below and by SDDM's Xorg config.
+IGPU_PCI="" IGPU_BUSID="" HAS_NVIDIA=""
+for dev in /sys/bus/pci/devices/*; do
+    [[ "$(cat "$dev/class")" == 0x03* ]] || continue
+    if [[ "$(cat "$dev/vendor")" == 0x10de ]]; then
+        HAS_NVIDIA=1
+    elif [[ "$(cat "$dev/boot_vga" 2>/dev/null)" == 1 ]]; then
+        IGPU_PCI="${dev##*/}"
+        # 0000:00:02.0 -> PCI:0:2:0 (Xorg wants decimal bus:device:function)
+        IFS=':.' read -r _ bus slot func <<<"$IGPU_PCI"
+        IGPU_BUSID="PCI:$((16#$bus)):$((16#$slot)):$func"
+    fi
+done
+
+# ============================================================
+# HYPRLAND ON THE iGPU ONLY
+# ============================================================
+# /dev/dri/igpu points at the iGPU's DRM card; config/uwsm/env sets
+# AQ_DRM_DEVICES to it when it exists, so Hyprland never opens the NVIDIA
+# dGPU and the dGPU can runtime-suspend. A stable name is needed because
+# card0/card1 numbering can swap between boots, and the /dev/dri/by-path
+# names contain colons, which AQ_DRM_DEVICES uses as its separator. Without an
+# NVIDIA dGPU (a VM, an Intel-only machine) the rule is removed, so the
+# symlink never exists and Hyprland uses its defaults.
+IGPU_RULE=/etc/udev/rules.d/70-igpu-symlink.rules
+if [[ -n "$HAS_NVIDIA" && -n "$IGPU_PCI" ]]; then
+    sudo tee "$IGPU_RULE" >/dev/null <<EOF
+# Written by hyprland.sh: stable /dev/dri/igpu name for the iGPU, used by
+# AQ_DRM_DEVICES in ~/.config/uwsm/env.
+KERNEL=="card*", SUBSYSTEM=="drm", KERNELS=="$IGPU_PCI", SYMLINK+="dri/igpu"
+EOF
+else
+    sudo rm -f "$IGPU_RULE"
+fi
+sudo udevadm control --reload
+
+# ============================================================
 # LOGIN: SDDM (Elegant theme) or direct login
 # ============================================================
 # Default is direct login: tty1 autologin via an agetty override, then the
@@ -426,17 +466,6 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     # server reads it, so other X servers still see both GPUs. Skipped
     # without an NVIDIA dGPU (e.g. in a VM).
     SDDM_XORG_CONF=/etc/X11/sddm-igpu.conf
-    IGPU_BUSID="" HAS_NVIDIA=""
-    for dev in /sys/bus/pci/devices/*; do
-        [[ "$(cat "$dev/class")" == 0x03* ]] || continue
-        if [[ "$(cat "$dev/vendor")" == 0x10de ]]; then
-            HAS_NVIDIA=1
-        elif [[ "$(cat "$dev/boot_vga" 2>/dev/null)" == 1 ]]; then
-            # 0000:00:02.0 -> PCI:0:2:0 (Xorg wants decimal bus:device:function)
-            IFS=':.' read -r _ bus slot func <<<"${dev##*/}"
-            IGPU_BUSID="PCI:$((16#$bus)):$((16#$slot)):$func"
-        fi
-    done
     if [[ -n "$HAS_NVIDIA" && -n "$IGPU_BUSID" ]]; then
         sudo tee "$SDDM_XORG_CONF" >/dev/null <<EOF
 # Written by hyprland.sh: SDDM's greeter Xorg (started with -config pointing

@@ -9,6 +9,18 @@
 # or a restarted hypr-shell never saw them. Compositor-only variables stay in
 # environment.lua; app-facing ones belong here.
 
+# Hybrid Intel + NVIDIA: Hyprland drives only the iGPU, so it never holds the
+# dGPU open and the dGPU can runtime-suspend (games still reach it through
+# prime-run). Without this, aquamarine opens every GPU. /dev/dri/igpu is a
+# udev symlink that hyprland.sh writes only when an NVIDIA dGPU is present, so
+# in a VM or on an Intel-only machine this is a no-op. A /dev/dri/by-path name
+# can't be used: AQ_DRM_DEVICES is colon-separated and PCI paths contain
+# colons. Trade-off: outputs wired to the dGPU (on many gaming laptops the
+# HDMI port) stay dark under Hyprland; remove this block to use them.
+if [ -e /dev/dri/igpu ]; then
+    export AQ_DRM_DEVICES=/dev/dri/igpu
+fi
+
 # Cursor (Hyprland reads these for its own cursor too; it inherits this env)
 export XCURSOR_THEME=Adwaita
 export XCURSOR_SIZE=24
@@ -16,7 +28,11 @@ export XCURSOR_SIZE=24
 # Toolkits on Wayland
 export MOZ_ENABLE_WAYLAND=1
 export CLUTTER_BACKEND=wayland
-export SDL_VIDEODRIVER=wayland
+# Deliberately no SDL_VIDEODRIVER. SDL3 already picks Wayland on its own, and
+# SDL2 games run through XWayland, which is the most compatible path for
+# games. Forcing "wayland" broke games that bundle an SDL2 built without
+# Wayland support ("No available video device"); the "wayland,x11" fallback
+# list only works with SDL 2.0.22+, so it doesn't help those games either.
 
 # Qt apps (OBS, qBittorrent, VirtualBox, VLC, ...)
 export QT_QPA_PLATFORM="wayland;xcb"

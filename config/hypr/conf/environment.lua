@@ -13,8 +13,14 @@
 hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
 hl.env("XDG_SESSION_DESKTOP", "Hyprland")
 hl.env("XDG_SESSION_TYPE", "wayland")
-hl.env("WLR_NO_HARDWARE_CURSORS", "1")
-hl.env("WLR_DRM_NO_ATOMIC", "1")
+
+-- No WLR_* variables: Hyprland runs on aquamarine, not wlroots, and ignores
+-- them. Hardware cursors are already turned off automatically on NVIDIA
+-- outputs (cursor:no_hardware_cursors defaults to "auto").
+--
+-- AQ_DRM_DEVICES (Hyprland on the iGPU only, so the dGPU can power off) is
+-- set in config/uwsm/env, not here: aquamarine picks its GPUs when Hyprland
+-- starts, so the variable has to be in the environment before that.
 
 -- GTK4's Vulkan renderer wakes the runtime-suspended NVIDIA dGPU on every
 -- app launch (~1.5s stall). The fix (GDK_DISABLE=vulkan) deliberately lives

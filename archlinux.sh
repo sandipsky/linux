@@ -875,6 +875,9 @@ systemctl enable systemd-resolved.service
 # ============================================================
 systemctl enable NetworkManager bluetooth power-profiles-daemon fstrim.timer
 systemctl enable battery-charge-threshold.service
+# Copy a newer systemd-boot from /usr/lib onto the ESP at the next boot after
+# a systemd upgrade (bootctl install only ran once, above).
+systemctl enable systemd-boot-update.service
 systemctl --global enable pipewire pipewire-pulse wireplumber
 
 systemctl mask NetworkManager-wait-online.service systemd-networkd-wait-online.service

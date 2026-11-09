@@ -1,14 +1,32 @@
 #!/usr/bin/env bash
-# Fresh Arch Linux install (systemd-boot, Intel + NVIDIA laptop; NVIDIA is
-# skipped when running in a VM).
+# Fresh Arch Linux install (systemd-boot, Intel + NVIDIA laptop). In a VM the
+# laptop hardware pieces are skipped, see VM DETECTION.
 set -e
+
+# ============================================================
+# VM DETECTION
+# ============================================================
+# "oracle" for VirtualBox, "kvm"/"qemu"/"vmware"/... for other hypervisors,
+# "none" on bare metal. A VM gets none of the laptop hardware pieces: no CPU
+# microcode (the kernel doesn't load it under a hypervisor), no device
+# firmware, no Intel GPU drivers or i915 early KMS, no NVIDIA driver, no
+# headers/dkms (only the NVIDIA and VirtualBox-host modules build against
+# them), no audio power-save or battery charge threshold, and no prompts for
+# the NTFS data drive or the VirtualBox host.
+VIRT=$(systemd-detect-virt --vm 2>/dev/null) || VIRT=none
+if [[ "$VIRT" != none ]]; then
+    echo "Running in a $VIRT VM: skipping the laptop hardware pieces."
+fi
 
 # ============================================================
 # PROMPTS
 # ============================================================
 read -p "EFI partition (e.g. /dev/nvme0n1p1): " EFI
 read -p "ROOT partition (e.g. /dev/nvme0n1p2): " ROOT
-read -p "Enter NTFS D Drive partition (optional, e.g. /dev/nvme1n1p1, blank to skip): " NTFS_DRIVE
+NTFS_DRIVE=""
+if [[ "$VIRT" == none ]]; then
+    read -p "Enter NTFS D Drive partition (optional, e.g. /dev/nvme1n1p1, blank to skip): " NTFS_DRIVE
+fi
 read -p "Username: " USER
 read -p "Full Name: " NAME
 read -p "Password: " PASSWORD
@@ -16,7 +34,11 @@ read -p "Install the development stack (node, JDK, Angular CLI, Docker, Postman)
 read -p "Install the gaming stack (wine-staging, lutris)? [Y/n]: " INSTALL_GAMING
 read -p "Install LibreOffice (only Writer, Calc, Impress in the launcher)? [Y/n]: " INSTALL_OFFICE
 read -p "Install the Plymouth boot splash (default theme, no distro logo)? [Y/n]: " INSTALL_PLYMOUTH
-read -p "Install VirtualBox (VM host + dkms modules + guest-additions ISO)? [Y/n]: " INSTALL_VBOX
+if [[ "$VIRT" == none ]]; then
+    read -p "Install VirtualBox (VM host + dkms modules + guest-additions ISO)? [Y/n]: " INSTALL_VBOX
+else
+    INSTALL_VBOX=n
+fi
 
 # ============================================================
 # FILESYSTEM
@@ -69,19 +91,26 @@ sed -i 's/^#\?ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf
 # ============================================================
 pacman -Syy --noconfirm archlinux-keyring
 
+# Bare metal only (see VM DETECTION): microcode, device firmware, the Intel
+# GPU's Vulkan and VA-API drivers, and the headers + dkms that
+# nvidia-open-dkms and virtualbox-host-dkms build against. A VM's virtual GPU
+# renders through plain mesa.
+HW_PKGS=()
+if [[ "$VIRT" == none ]]; then
+    HW_PKGS=(linux-headers linux-firmware intel-ucode vulkan-intel intel-media-driver dkms)
+fi
+
 pacstrap /mnt --noconfirm --needed \
 base base-devel \
-linux linux-headers \
-linux-firmware \
+linux \
 networkmanager vim git curl \
-intel-ucode \
-mesa vulkan-intel intel-media-driver \
-dkms \
+mesa \
 zram-generator \
 power-profiles-daemon \
 bluez bluez-utils \
 ntfs-3g \
-pipewire wireplumber pipewire-alsa pipewire-pulse
+pipewire wireplumber pipewire-alsa pipewire-pulse \
+"${HW_PKGS[@]}"
 
 genfstab -U /mnt >> /mnt/etc/fstab
 ROOT_UUID=$(blkid -s UUID -o value "$ROOT")
@@ -89,12 +118,16 @@ NTFS_UUID=""
 if [[ -n "$NTFS_DRIVE" ]]; then
     NTFS_UUID=$(blkid -s UUID -o value "$NTFS_DRIVE")
 fi
-VIRT=$(systemd-detect-virt) || true
-# The NVIDIA driver is bare-metal only; a VM gets no nvidia-drm.modeset=1 either.
-if [[ -n "$VIRT" && "$VIRT" != "none" ]]; then
-    NVIDIA_KARGS=""
+# Boot entry pieces that only make sense on the laptop: the microcode initrd
+# (intel-ucode isn't installed in a VM, so the entry must not reference it),
+# i915.fastboot (keep the firmware's mode on the Intel panel, no modeset
+# flicker) and nvidia-drm.modeset=1 (the NVIDIA driver is bare-metal only).
+if [[ "$VIRT" == none ]]; then
+    INITRDS=$'initrd  /intel-ucode.img\ninitrd  /initramfs-linux.img'
+    HW_KARGS=" i915.fastboot=1 nvidia-drm.modeset=1"
 else
-    NVIDIA_KARGS=" nvidia-drm.modeset=1"
+    INITRDS='initrd  /initramfs-linux.img'
+    HW_KARGS=""
 fi
 
 # ============================================================
@@ -248,9 +281,12 @@ ZRAM
 # ============================================================
 # AUDIO POWER SAVE (idle codecs suspend; also needed for dGPU D3cold)
 # ============================================================
-cat <<'SNDPM' > /etc/modprobe.d/audio-powersave.conf
+# Bare metal only: a VM's emulated sound card saves no power.
+if [[ "$VIRT" == none ]]; then
+    cat <<'SNDPM' > /etc/modprobe.d/audio-powersave.conf
 options snd_hda_intel power_save=1 power_save_controller=Y
 SNDPM
+fi
 
 # ============================================================
 # MULTILIB
@@ -276,15 +312,18 @@ LOADER
 cat <<ENTRY > /boot/loader/entries/arch.conf
 title   ArchLinux
 linux   /vmlinuz-linux
-initrd  /intel-ucode.img
-initrd  /initramfs-linux.img
-options root=UUID=$ROOT_UUID rw quiet loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 i915.fastboot=1 nowatchdog 8250.nr_uarts=0 mitigations=off$NVIDIA_KARGS
+$INITRDS
+options root=UUID=$ROOT_UUID rw quiet loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 nowatchdog 8250.nr_uarts=0 mitigations=off$HW_KARGS
 ENTRY
 
 # ============================================================
 # MKINITCPIO (early KMS = flicker-free boot)
 # ============================================================
-sed -i 's/^MODULES=.*/MODULES=(i915)/' /etc/mkinitcpio.conf
+# i915 early KMS on bare metal. A VM has no Intel GPU: its virtual GPU driver
+# loads from the root filesystem as usual (Plymouth uses simpledrm until then).
+if [[ "$VIRT" == none ]]; then
+    sed -i 's/^MODULES=.*/MODULES=(i915)/' /etc/mkinitcpio.conf
+fi
 sed -i 's/^HOOKS=.*/HOOKS=(systemd autodetect modconf block filesystems keyboard)/' /etc/mkinitcpio.conf
 sed -i 's/^#\?COMPRESSION=.*/COMPRESSION="zstd"/' /etc/mkinitcpio.conf
 sed -i 's/^#\?COMPRESSION_OPTIONS=.*/COMPRESSION_OPTIONS=(-3)/' /etc/mkinitcpio.conf
@@ -295,7 +334,7 @@ sed -i 's/^#\?COMPRESSION_OPTIONS=.*/COMPRESSION_OPTIONS=(-3)/' /etc/mkinitcpio.
 # A VM has no NVIDIA dGPU: the driver, its power management and the early-KMS
 # modules are skipped there (the outer script also leaves nvidia-drm.modeset=1
 # off the kernel command line).
-if [[ -n "$VIRT" && "$VIRT" != "none" ]]; then
+if [[ "$VIRT" != none ]]; then
     echo "Running in a $VIRT VM, skipping the NVIDIA driver."
 else
     pacman -S --noconfirm --needed \
@@ -488,7 +527,10 @@ fi
 # ============================================================
 # BATTERY CHARGE THRESHOLD
 # ============================================================
-cat <<'BATTERY' > /etc/systemd/system/battery-charge-threshold.service
+# Bare metal only: a VM has no battery, so the unit would only fail at boot.
+# Enabled in SERVICES below.
+if [[ "$VIRT" == none ]]; then
+    cat <<'BATTERY' > /etc/systemd/system/battery-charge-threshold.service
 [Unit]
 Description=Set battery charge threshold
 After=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
@@ -501,6 +543,7 @@ ExecStart=/usr/bin/bash -c 'echo 80 | tee /sys/class/power_supply/BAT*/charge_co
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 BATTERY
+fi
 
 # ============================================================
 # ZSH / STARSHIP
@@ -567,11 +610,16 @@ else
         gtk3 lib32-gtk3 \
         gst-plugins-base-libs \
         gst-libav \
-        vulkan-intel lib32-vulkan-intel \
         lib32-mesa \
         gst-plugins-good \
         python-protobuf \
         lutris
+
+    # The Intel GPU's Vulkan driver, 64- and 32-bit: bare metal only, like
+    # vulkan-intel in pacstrap (a VM has no Intel GPU).
+    if [[ "$VIRT" == none ]]; then
+        pkg_install vulkan-intel lib32-vulkan-intel
+    fi
 fi
 
 # ============================================================
@@ -652,12 +700,11 @@ fi
 # modules-load.d file loads them at boot. virtualbox-guest-iso puts
 # VBoxGuestAdditions.iso where VirtualBox looks for it, so "Insert Guest
 # Additions CD image" works offline. vboxusers is needed for USB passthrough.
+# Never in a VM (INSTALL_VBOX is preset to n there, and dkms/linux-headers
+# aren't installed).
 if [[ "$INSTALL_VBOX" =~ ^[Nn] ]]; then
     echo "Skipping VirtualBox."
 else
-    if [[ -n "$VIRT" && "$VIRT" != "none" ]]; then
-        echo "note: this looks like a $VIRT guest; VirtualBox as a nested hypervisor only works with nested VT-x/AMD-V enabled on the outer VM"
-    fi
     pkg_install virtualbox virtualbox-host-dkms virtualbox-guest-iso
 
     if getent group vboxusers >/dev/null; then
@@ -788,7 +835,9 @@ systemctl enable systemd-resolved.service
 # SERVICES
 # ============================================================
 systemctl enable NetworkManager bluetooth power-profiles-daemon fstrim.timer
-systemctl enable battery-charge-threshold.service
+if [[ "$VIRT" == none ]]; then
+    systemctl enable battery-charge-threshold.service
+fi
 # Copy a newer systemd-boot from /usr/lib onto the ESP at the next boot after
 # a systemd upgrade (bootctl install only ran once, above).
 systemctl enable systemd-boot-update.service

@@ -1,2 +1,4 @@
-# Shell scripts are run on Linux; never let a Windows checkout turn them into CRLF.
-*.sh text eol=lf
+# Everything here is consumed on Linux (scripts, Hyprland Lua, TOML, service
+# units, XML): keep every text file LF in the index and on checkout, so a
+# Windows checkout never turns them into CRLF.
+* text=auto eol=lf

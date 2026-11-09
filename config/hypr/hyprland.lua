@@ -18,13 +18,21 @@ require("conf/windowrules")
 -- in, `remove` deletes it) — pcall so a missing file is not a config error.
 pcall(require, "conf/virtualbox")
 
+-- VM guest overrides (software cursor, no blur). hyprland.sh writes
+-- conf/vm.lua only when it runs inside a VM (VirtualBox, QEMU, ...); loaded
+-- after the files above so its settings win. Not to be confused with
+-- conf/virtualbox above, which is for running VirtualBox on this machine.
+local in_vm = pcall(require, "conf/vm")
+
 -- -----------------------------------------------------
 -- Monitor
 -- -----------------------------------------------------
 
 hl.monitor({
     output   = "",
-    mode     = "1920x1080@144",
+    -- In a VM the virtual display offers no 144 Hz mode, and its preferred
+    -- mode follows the VM window size.
+    mode     = in_vm and "preferred" or "1920x1080@144",
     position = "auto",
     scale    = 1,
 })

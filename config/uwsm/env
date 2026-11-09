@@ -13,7 +13,7 @@
 # dGPU open and the dGPU can runtime-suspend (games still reach it through
 # prime-run). Without this, aquamarine opens every GPU. /dev/dri/igpu is a
 # udev symlink that hyprland.sh writes only when an NVIDIA dGPU is present, so
-# in a VM or on an Intel-only machine this is a no-op. A /dev/dri/by-path name
+# on an Intel-only machine this is a no-op. A /dev/dri/by-path name
 # can't be used: AQ_DRM_DEVICES is colon-separated and PCI paths contain
 # colons. Trade-off: outputs wired to the dGPU (on many gaming laptops the
 # HDMI port) stay dark under Hyprland; remove this block to use them.

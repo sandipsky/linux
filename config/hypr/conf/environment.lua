@@ -16,8 +16,7 @@ hl.env("XDG_SESSION_TYPE", "wayland")
 
 -- No WLR_* variables: Hyprland runs on aquamarine, not wlroots, and ignores
 -- them. Hardware cursors are already turned off automatically on NVIDIA
--- outputs (cursor:no_hardware_cursors defaults to "auto"), and in a VM by
--- conf/vm.lua (written by hyprland.sh).
+-- outputs (cursor:no_hardware_cursors defaults to "auto").
 --
 -- AQ_DRM_DEVICES (Hyprland on the iGPU only, so the dGPU can power off) is
 -- set in config/uwsm/env, not here: aquamarine picks its GPUs when Hyprland

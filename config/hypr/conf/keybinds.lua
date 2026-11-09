@@ -99,8 +99,6 @@ hl.bind(mainMod .. " + A", shell("--control-center"))
 hl.bind(mainMod .. " + X", shell("--session"))
 hl.bind(mainMod .. " + L", shell("--lock"))
 
--- Super+Shift+Return (start the Windows VM) lives in conf/virtualbox.lua,
--- present only while scripts/virtualbox.sh has VirtualBox installed.
 hl.bind(mainMod .. " + SHIFT + N", hl.dsp.exec_cmd("hyprctl reload"))
 hl.bind(mainMod .. " + SHIFT + W", hl.dsp.exec_cmd("env HS_SETTINGS_PAGE=wallpaper_page /home/USERNAME/.local/bin/hypr-shell-settings"))
 hl.bind(mainMod .. " + S", hl.dsp.exec_cmd("/home/USERNAME/.local/bin/hypr-shell-settings"))

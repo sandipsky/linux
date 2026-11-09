@@ -28,26 +28,6 @@ if [[ ! -d "$REPO_DIR/config/hypr" || ! -d "$REPO_DIR/sddm-themes/Elegant" || ! 
 fi
 
 # ============================================================
-# VM DETECTION
-# ============================================================
-# "oracle" for VirtualBox, "kvm"/"qemu"/"vmware"/... for other hypervisors,
-# "none" on bare metal (--vm leaves containers out). In a VM the laptop-only
-# pieces are skipped and conf/vm.lua is written (see VM GUEST below).
-# archlinux.sh already installed virtualbox-guest-utils in a VirtualBox guest:
-# vboxservice.service, and VBoxClient-all (screen resize, clipboard) through
-# /etc/xdg/autostart, which uwsm starts with the session.
-VIRT=$(systemd-detect-virt --vm 2>/dev/null) || VIRT=none
-if [[ "$VIRT" == oracle ]]; then
-    echo "VirtualBox guest detected. Hyprland needs Settings > Display > Graphics Controller: VMSVGA."
-    echo "Leave 3D acceleration off: Mesa then renders in software, which works; VMSVGA's 3D path is unreliable on Arch guests."
-    # VMSVGA is the VMware SVGA II device (PCI vendor 0x15ad); VBoxVGA and
-    # VBoxSVGA are 0x80ee and don't resize the screen with the VM window.
-    if ! grep -qx 0x15ad /sys/bus/pci/devices/*/vendor 2>/dev/null; then
-        echo "WARNING: the graphics controller is not VMSVGA. Power the VM off and switch it, or the screen won't follow the VM window size."
-    fi
-fi
-
-# ============================================================
 # PROMPTS
 # ============================================================
 # All interactive input happens here, before the long unattended run.
@@ -164,41 +144,6 @@ done
 # hypr-shell's bar presets carry the same absolute paths (any *.json shipped).
 find "$HOME/.config/hypr-shell/presets" -name '*.json' -exec sed -i "s|USERNAME|$USERNAME|g" {} +
 
-# ============================================================
-# VM GUEST (VirtualBox, QEMU, ...)
-# ============================================================
-# hyprland.lua loads conf/vm.lua after the other conf/ files, so these
-# settings win, and while it loads the monitor rule asks for the virtual
-# display's preferred mode instead of the laptop panel's 1920x1080@144 (the
-# virtual display follows the VM window size). On bare metal the file is
-# removed, so the laptop config applies unchanged.
-VM_CONF="$HOME/.config/hypr/conf/vm.lua"
-if [[ "$VIRT" != none ]]; then
-    tee "$VM_CONF" >/dev/null <<EOF
--- Written by hyprland.sh because it ran in a VM (systemd-detect-virt: $VIRT).
--- hyprland.lua loads this last and switches its monitor rule to the mode
--- the virtual display offers while this file exists. Delete it to drop the
--- VM overrides.
-
-hl.config({
-    -- Virtual GPUs (VirtualBox VMSVGA, virtio-gpu, ...) tend to show no
-    -- cursor, or a misplaced one, through a hardware cursor plane.
-    cursor = {
-        no_hardware_cursors = 1,
-    },
-    -- Without 3D acceleration the VM renders on the CPU (llvmpipe), and blur
-    -- is by far the costliest effect.
-    decoration = {
-        blur = {
-            enabled = false,
-        },
-    },
-})
-EOF
-else
-    rm -f "$VM_CONF"
-fi
-
 # fastfetch on every new interactive terminal. ~/.zshrc itself is written by
 # archlinux.sh, so only append the block if it isn't there yet.
 ZSHRC="$HOME/.zshrc"
@@ -216,20 +161,13 @@ fi
 # config/systemd/user/acpoweron.service and acpoweroff.service switch the
 # power profile, brightness and the panel's refresh rate with the charger.
 # udev runs as root, so it starts them in the user's manager via --machine.
-# Not in a VM: there is no charger to react to (VirtualBox reports AC as
-# always online), and no backlight or eDP-1 panel for the services to adjust,
-# so they would only fail.
 POWER_RULE=/etc/udev/rules.d/99-power.rules
-if [[ "$VIRT" == none ]]; then
-    sudo tee "$POWER_RULE" >/dev/null <<EOF
+sudo tee "$POWER_RULE" >/dev/null <<EOF
 # Written by hyprland.sh: start the user's acpoweron/acpoweroff services
 # (~/.config/systemd/user/) when the charger is plugged in or pulled.
 SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="1", RUN+="/usr/bin/systemctl --no-block --machine=$USERNAME@.host --user start acpoweron.service"
 SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="0", RUN+="/usr/bin/systemctl --no-block --machine=$USERNAME@.host --user start acpoweroff.service"
 EOF
-else
-    sudo rm -f "$POWER_RULE"
-fi
 sudo udevadm control --reload
 
 # ============================================================
@@ -549,7 +487,7 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     # own (-config, via ServerArguments below) that drives only the boot GPU
     # (the iGPU wired to the panel) and adds no other GPUs. Only SDDM's X
     # server reads it, so other X servers still see both GPUs. Skipped
-    # without an NVIDIA dGPU (e.g. in a VM).
+    # without an NVIDIA dGPU.
     SDDM_XORG_CONF=/etc/X11/sddm-igpu.conf
     if [[ -n "$HAS_NVIDIA" && -n "$IGPU_BUSID" ]]; then
         sudo tee "$SDDM_XORG_CONF" >/dev/null <<EOF

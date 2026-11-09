@@ -47,32 +47,38 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # ============================================================
 # PACKAGES
 # ============================================================
-# Compositor and session (uwsm), Wayland utilities, the GNOME apps used with
-# it, and the Adwaita GTK/icon themes (adwaita-icon-theme pulls in
-# adwaita-cursors, the cursor theme config/uwsm/env and gtk-3.0/settings.ini
-# select). Adwaita's grey folder icons are swapped for Yaru's orange ones in
-# the FOLDER ICONS step below. luajit runs the Lua Hyprland config.
-# nautilus-python and python-pillow run the Nautilus extensions from the
-# NAUTILUS EXTENSIONS step. qt5-wayland and qt6-wayland are what lets Qt apps
-# (OBS, qBittorrent, VLC, VirtualBox) honour the QT_QPA_PLATFORM=wayland in
-# config/uwsm/env; without them every Qt app silently falls back to XWayland.
+# Compositor and session (uwsm), the Noctalia desktop shell, Wayland
+# utilities, the GNOME apps used with it, and the Adwaita GTK/icon themes
+# (adwaita-icon-theme pulls in adwaita-cursors, the cursor theme
+# config/uwsm/env and gtk-3.0/settings.ini select). Adwaita's grey folder
+# icons are swapped for Yaru's orange ones in the FOLDER ICONS step below.
+# luajit runs the Lua Hyprland config. nautilus-python and python-pillow run
+# the Nautilus extensions from the NAUTILUS EXTENSIONS step. qt5-wayland and
+# qt6-wayland are what lets Qt apps (OBS, qBittorrent, VLC, VirtualBox)
+# honour the QT_QPA_PLATFORM=wayland in config/uwsm/env; without them every
+# Qt app silently falls back to XWayland.
+#
+# noctalia (v5, in extra) is the bar, launcher, control center, notification
+# daemon, clipboard history, lock screen, idle handling, night light,
+# wallpaper and OSDs in one: no cliphist, hyprsunset or separate polkit agent
+# (config/noctalia/config.toml turns its built-in agent on). upower is its
+# optional dependency for the battery widget; power-profiles-daemon comes
+# from archlinux.sh. autostart.lua starts it, keybinds.lua drives it with
+# `noctalia msg`.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
-    hyprsunset \
     xdg-desktop-portal-hyprland \
     qt5-wayland \
     qt6-wayland \
     uwsm \
+    noctalia \
+    upower \
     wl-clipboard \
-    cliphist \
-    wtype \
     grim \
     slurp \
     brightnessctl \
-    polkit-gnome \
     blueman \
-    jq \
     luajit \
     alacritty \
     nautilus \
@@ -106,51 +112,18 @@ fi
 rm -f "$CLAUDE_INSTALLER"
 
 # ============================================================
-# HYPR-SHELL
-# ============================================================
-# hypr-shell — the GTK4 bar/shell (bar, launcher, control center,
-# notifications, lock/idle, night light, wallpaper, OSDs). Cloned fresh from
-# its GitHub repo into a temp dir and built from there — the repo moves too
-# fast to keep a vendored snapshot in sync. Its own install.sh installs the
-# pacman build deps it is missing (gtkmm-4.0, gtk4-layer-shell, libadwaita,
-# ...) and builds into ~/.local (binaries, icon fonts, desktop entry);
-# autostart.lua and the keybinds call /home/$USERNAME/.local/bin/hypr-shell by
-# absolute path. The throwaway clone is removed afterwards; the dev checkout
-# at ~/Projects/hypr-shell is cloned by hand later — deliberately not part of
-# this script.
-HYPR_SHELL_REPO=https://github.com/sandipsky/hypr-shell
-BUILD_DIR=$(mktemp -d)
-git clone --depth 1 "$HYPR_SHELL_REPO" "$BUILD_DIR/hypr-shell"
-# Run through bash rather than ./install.sh: the repo tracks it as 100644, so
-# the clone has no exec bit. install.sh installs its missing build deps with
-# a plain `sudo pacman -S` (no --noconfirm), and on a fresh machine they are
-# all missing, so pacman would stop at "Proceed with installation? [Y/n]" and
-# stall the unattended run. `yes` answers that (and any prompt a future
-# install.sh adds); meson reads nothing from stdin. Without pipefail the
-# pipeline's status is install.sh's, so a failed build still aborts under
-# set -e as before.
-if [[ ! -f "$BUILD_DIR/hypr-shell/install.sh" ]]; then
-    echo "ERROR: $HYPR_SHELL_REPO has no install.sh — nothing to build." >&2
-    exit 1
-fi
-(cd "$BUILD_DIR/hypr-shell" && yes | bash ./install.sh)
-rm -rf "${BUILD_DIR:?}"
-
-# ============================================================
 # CONFIG (config/ -> ~/.config)
 # ============================================================
-# Hyprland (Lua), hypr-shell, uwsm session env, alacritty, fastfetch, vim,
-# gtk-3.0 settings, fontconfig and the AC-power user services.
+# Hyprland (Lua), Noctalia, uwsm session env, alacritty, fastfetch, vim,
+# gtk-3.0 settings, fontconfig and the AC-power user services. Noctalia's
+# config.toml holds only the overrides; everything else is its defaults, and
+# what is changed in its Settings window lands in
+# ~/.local/state/noctalia/settings.toml on top of it.
 mkdir -p "$HOME/.config"
 cp -r "$REPO_DIR"/config/* "$HOME/.config/"
 
-# The Hyprland Lua config, hypr-shell's config.json and fastfetch's logo path
-# carry absolute paths.
-for f in hypr/conf/keybinds.lua hypr/conf/autostart.lua hypr-shell/config.json fastfetch/config.jsonc; do
-    sed -i "s|USERNAME|$USERNAME|g" "$HOME/.config/$f"
-done
-# hypr-shell's bar presets carry the same absolute paths (any *.json shipped).
-find "$HOME/.config/hypr-shell/presets" -name '*.json' -exec sed -i "s|USERNAME|$USERNAME|g" {} +
+# fastfetch's logo path carries an absolute path.
+sed -i "s|USERNAME|$USERNAME|g" "$HOME/.config/fastfetch/config.jsonc"
 
 # fastfetch on every new interactive terminal. ~/.zshrc itself is written by
 # archlinux.sh, so only append the block if it isn't there yet.
@@ -333,7 +306,7 @@ install -Dm755 "$REPO_DIR/nautilus/folder-preview" "$HOME/.local/bin/folder-prev
 # QT_SCALE_FACTOR in config/uwsm/env (uwsm exports it into the systemd user
 # environment, so it reaches apps however they are launched — Hyprland's own
 # `env` only covers its direct children) and get Fira Sans via
-# config/fontconfig/conf.d/50-hypr-shell-sans-serif.conf — no per-app
+# config/fontconfig/conf.d/50-sans-serif-fira.conf — no per-app
 # .desktop overrides.
 #
 # Nautilus: expandable folders in list view, "Create Link" and "Delete
@@ -373,8 +346,9 @@ xdg-mime default org.gnome.TextEditor.desktop application/x-shellscript
 # would otherwise grab the association).
 xdg-mime default org.gnome.Evince.desktop application/pdf
 
-# Account picture for hypr-shell's lock screen and the SDDM greeter, if the
-# repo carries one (profile.png next to this script).
+# Account picture for Noctalia (avatar_path = ~/.face in its config.toml:
+# control center, launcher, lock screen) and the SDDM greeter, if the repo
+# carries one (profile.png next to this script).
 if [[ -f "$REPO_DIR/profile.png" ]]; then
     cp "$REPO_DIR/profile.png" "$HOME/.face"
 fi
@@ -451,9 +425,9 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     sudo pacman -S --noconfirm --needed sddm
     sudo pacman -S --noconfirm --needed --asdeps qt6-5compat
 
-    # Install the theme, keeping what hypr-shell-settings' "Login screen"
-    # page may have written into the theme dir on an earlier run
-    # (theme.conf.user and a copied background image).
+    # Install the theme, keeping what was set by hand in the theme dir on an
+    # earlier run (theme.conf.user overrides theme.conf without touching the
+    # vendored file, and a copied background image).
     KEEP=$(mktemp -d)
     for f in "$THEME_DIR"/theme.conf.user "$THEME_DIR"/background.*; do
         [[ -f "$f" ]] && sudo cp -p "$f" "$KEEP/"
@@ -468,25 +442,9 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     sudo chown -R root:root "$THEME_DIR"
     sudo chmod -R u=rwX,go=rX "$THEME_DIR"
 
-    # The theme derives its colours from hypr-shell's accent (same maths as
-    # the shell's palette.hpp), so the greeter matches the desktop. Take it
-    # from the config copied above; theme.conf.user overrides theme.conf
-    # without touching the vendored file, and also holds the "Login screen"
-    # page's settings (single [General] section) — only the accent key is
-    # touched, replace-or-append.
-    USER_CONF="$THEME_DIR/theme.conf.user"
-    ACCENT=$(jq -r '.ui.accent // empty' "$HOME/.config/hypr-shell/config.json" 2>/dev/null || true)
-    if [[ "$ACCENT" =~ ^#[0-9a-fA-F]{6}$ ]]; then
-        if sudo test -f "$USER_CONF" && sudo grep -q '^accent=' "$USER_CONF"; then
-            sudo sed -i "s|^accent=.*|accent=$ACCENT|" "$USER_CONF"
-        elif sudo test -f "$USER_CONF"; then
-            printf 'accent=%s\n' "$ACCENT" | sudo tee -a "$USER_CONF" >/dev/null
-        else
-            printf '[General]\naccent=%s\n' "$ACCENT" | sudo tee "$USER_CONF" >/dev/null
-        fi
-    else
-        echo "no ui.accent in hypr-shell's config.json — the theme's default applies"
-    fi
+    # The theme's accent is its own default (theme.conf) unless an accent=
+    # line is put in theme.conf.user by hand; Noctalia's palette is not read,
+    # it keeps its colours in its own state and templates.
 
     # The greeter's Xorg keeps running for the whole session after login, and
     # left to autoconfigure it also opens the NVIDIA dGPU as a PRIME GPU

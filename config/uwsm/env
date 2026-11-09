@@ -6,7 +6,7 @@
 # Hyprland's own `env` (hl.env in config/hypr/conf/environment.lua) only
 # applies to processes Hyprland forks directly, so anything launched through
 # systemd (`uwsm app`, transient scopes), D-Bus activation, xdg-desktop-portal
-# or a restarted hypr-shell never saw them. Compositor-only variables stay in
+# or a restarted Noctalia never saw them. Compositor-only variables stay in
 # environment.lua; app-facing ones belong here.
 
 # Hybrid Intel + NVIDIA: Hyprland drives only the iGPU, so it never holds the
@@ -43,7 +43,7 @@ export QT_AUTO_SCREEN_SCALE_FACTOR=0
 # ≈ 11pt, close to the GTK 12pt.
 export QT_SCALE_FACTOR=1.25
 # Deliberately no QT_QPA_PLATFORMTHEME: Qt's built-in fallback asks fontconfig
-# for "Sans Serif" 9pt, and fontconfig/conf.d/50-hypr-shell-sans-serif.conf
+# for "Sans Serif" 9pt, and fontconfig/conf.d/50-sans-serif-fira.conf
 # maps sans-serif to Fira Sans, so Qt apps get the desktop font at Qt's native
 # 9pt. The gtk3 theme would import the GTK font instead — Fira Sans 12 — which
 # on top of the 1.25 QT_SCALE_FACTOR above made Qt apps far too big. It would

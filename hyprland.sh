@@ -92,11 +92,13 @@ sudo pacman -S --noconfirm --needed \
 # ============================================================
 # Downloaded first and run only if the download succeeded: piped straight
 # into bash, a failed curl hands bash an empty script and the install is
-# skipped without a word. Best effort either way, the desktop doesn't depend
-# on it.
+# skipped without a word. stdin from /dev/null: the installer is written for
+# `curl | bash`, where stdin is the pipe and nothing can be read from the
+# terminal, so this keeps it that way and it can never block waiting for
+# input. Best effort either way, the desktop doesn't depend on it.
 CLAUDE_INSTALLER=$(mktemp)
 if curl -fsSL https://claude.ai/install.sh -o "$CLAUDE_INSTALLER"; then
-    bash "$CLAUDE_INSTALLER" \
+    bash "$CLAUDE_INSTALLER" </dev/null \
         || echo "WARNING: the Claude Code installer failed; rerun later with: curl -fsSL https://claude.ai/install.sh | bash"
 else
     echo "WARNING: could not download the Claude Code installer; rerun later with: curl -fsSL https://claude.ai/install.sh | bash"
@@ -120,12 +122,18 @@ HYPR_SHELL_REPO=https://github.com/sandipsky/hypr-shell
 BUILD_DIR=$(mktemp -d)
 git clone --depth 1 "$HYPR_SHELL_REPO" "$BUILD_DIR/hypr-shell"
 # Run through bash rather than ./install.sh: the repo tracks it as 100644, so
-# the clone has no exec bit.
+# the clone has no exec bit. install.sh installs its missing build deps with
+# a plain `sudo pacman -S` (no --noconfirm), and on a fresh machine they are
+# all missing, so pacman would stop at "Proceed with installation? [Y/n]" and
+# stall the unattended run. `yes` answers that (and any prompt a future
+# install.sh adds); meson reads nothing from stdin. Without pipefail the
+# pipeline's status is install.sh's, so a failed build still aborts under
+# set -e as before.
 if [[ ! -f "$BUILD_DIR/hypr-shell/install.sh" ]]; then
     echo "ERROR: $HYPR_SHELL_REPO has no install.sh — nothing to build." >&2
     exit 1
 fi
-(cd "$BUILD_DIR/hypr-shell" && bash ./install.sh)
+(cd "$BUILD_DIR/hypr-shell" && yes | bash ./install.sh)
 rm -rf "${BUILD_DIR:?}"
 
 # ============================================================

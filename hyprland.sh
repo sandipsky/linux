@@ -73,12 +73,16 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # select). Adwaita's grey folder icons are swapped for Yaru's orange ones in
 # the FOLDER ICONS step below. luajit runs the Lua Hyprland config.
 # nautilus-python and python-pillow run the Nautilus extensions from the
-# NAUTILUS EXTENSIONS step.
+# NAUTILUS EXTENSIONS step. qt5-wayland and qt6-wayland are what lets Qt apps
+# (OBS, qBittorrent, VLC, VirtualBox) honour the QT_QPA_PLATFORM=wayland in
+# config/uwsm/env; without them every Qt app silently falls back to XWayland.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
     hyprsunset \
     xdg-desktop-portal-hyprland \
+    qt5-wayland \
+    qt6-wayland \
     uwsm \
     wl-clipboard \
     cliphist \
@@ -106,7 +110,18 @@ sudo pacman -S --noconfirm --needed \
 # ============================================================
 # CLAUDE CODE
 # ============================================================
-curl -fsSL https://claude.ai/install.sh | bash
+# Downloaded first and run only if the download succeeded: piped straight
+# into bash, a failed curl hands bash an empty script and the install is
+# skipped without a word. Best effort either way, the desktop doesn't depend
+# on it.
+CLAUDE_INSTALLER=$(mktemp)
+if curl -fsSL https://claude.ai/install.sh -o "$CLAUDE_INSTALLER"; then
+    bash "$CLAUDE_INSTALLER" \
+        || echo "WARNING: the Claude Code installer failed; rerun later with: curl -fsSL https://claude.ai/install.sh | bash"
+else
+    echo "WARNING: could not download the Claude Code installer; rerun later with: curl -fsSL https://claude.ai/install.sh | bash"
+fi
+rm -f "$CLAUDE_INSTALLER"
 
 # ============================================================
 # HYPR-SHELL
@@ -444,14 +459,15 @@ done
 # dGPU and the dGPU can runtime-suspend. A stable name is needed because
 # card0/card1 numbering can swap between boots, and the /dev/dri/by-path
 # names contain colons, which AQ_DRM_DEVICES uses as its separator. Without an
-# NVIDIA dGPU (a VM, an Intel-only machine) the rule is removed, so the
-# symlink never exists and Hyprland uses its defaults.
+# NVIDIA dGPU (an Intel-only machine) the rule is removed, so the symlink
+# never exists and Hyprland uses its defaults.
 IGPU_RULE=/etc/udev/rules.d/70-igpu-symlink.rules
 if [[ -n "$HAS_NVIDIA" && -n "$IGPU_PCI" ]]; then
     sudo tee "$IGPU_RULE" >/dev/null <<EOF
 # Written by hyprland.sh: stable /dev/dri/igpu name for the iGPU, used by
-# AQ_DRM_DEVICES in ~/.config/uwsm/env.
-KERNEL=="card*", SUBSYSTEM=="drm", KERNELS=="$IGPU_PCI", SYMLINK+="dri/igpu"
+# AQ_DRM_DEVICES in ~/.config/uwsm/env. ENV{DEVNAME} keeps the connector
+# objects (card1-eDP-1, ...) out: they match card* but have no device node.
+KERNEL=="card*", SUBSYSTEM=="drm", ENV{DEVNAME}=="/dev/dri/card*", KERNELS=="$IGPU_PCI", SYMLINK+="dri/igpu"
 EOF
 else
     sudo rm -f "$IGPU_RULE"
@@ -464,8 +480,14 @@ sudo udevadm control --reload
 # Default is direct login: tty1 autologin via an agetty override, then the
 # login profile execs Hyprland through uwsm. With SDDM chosen, sddm takes
 # over tty1 (sddm.service conflicts with getty@tty1.service) and the two
-# direct-login pieces are not written. Nothing is started live either way:
-# it takes effect at the reboot below.
+# direct-login pieces are not written. Each branch also undoes the other's
+# pieces, so a re-run that switches the answer takes effect. Nothing is
+# started live either way: it takes effect at the reboot below.
+GETTY_OVERRIDE=/etc/systemd/system/getty@tty1.service.d/override.conf
+# The uwsm autostart block in the login profile sits between these markers,
+# so it can be replaced or removed without touching the rest of the file.
+AUTOSTART_BEGIN='# >>> hyprland.sh: uwsm autostart on tty1 >>>'
+AUTOSTART_END='# <<< hyprland.sh: uwsm autostart on tty1 <<<'
 if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     THEME=Elegant
     THEME_DIR=/usr/share/sddm/themes/Elegant
@@ -588,10 +610,30 @@ EOF
         fi
     fi
 
+    # Undo an earlier direct-login run: the tty1 autologin override and the
+    # autostart block in the login profiles (sddm.service would win over
+    # getty@tty1 anyway, but a stale override is confusing).
+    if sudo test -f "$GETTY_OVERRIDE"; then
+        sudo rm -f "$GETTY_OVERRIDE"
+        sudo rmdir "$(dirname "$GETTY_OVERRIDE")" 2>/dev/null || true
+        sudo systemctl daemon-reload
+    fi
+    for f in "$HOME/.zprofile" "$HOME/.bash_profile"; do
+        if [[ -f "$f" ]] && grep -qF "$AUTOSTART_BEGIN" "$f"; then
+            sed -i "/^$AUTOSTART_BEGIN\$/,/^$AUTOSTART_END\$/d" "$f"
+        fi
+    done
+
     sudo systemctl enable sddm.service
 else
-    sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
-    sudo tee /etc/systemd/system/getty@tty1.service.d/override.conf >/dev/null <<EOF
+    # Undo an earlier SDDM run: enabled, sddm.service would take tty1 over
+    # the autologin below.
+    if systemctl is-enabled -q sddm.service 2>/dev/null; then
+        sudo systemctl disable sddm.service
+    fi
+
+    sudo mkdir -p "$(dirname "$GETTY_OVERRIDE")"
+    sudo tee "$GETTY_OVERRIDE" >/dev/null <<EOF
 [Service]
 ExecStart=
 ExecStart=-/usr/bin/agetty --autologin $USERNAME --skip-login --nonewline --noissue --noclear %I \$TERM
@@ -605,12 +647,19 @@ EOF
     else
         AUTOSTART_PROFILE="$HOME/.bash_profile"
     fi
-    tee "$AUTOSTART_PROFILE" >/dev/null <<'EOF'
-if [[ -z "$WAYLAND_DISPLAY" && "$(tty)" == "/dev/tty1" ]]; then
+    # Replace-or-append between the marker lines: a re-run updates the block
+    # and keeps whatever else the profile holds.
+    if [[ -f "$AUTOSTART_PROFILE" ]]; then
+        sed -i "/^$AUTOSTART_BEGIN\$/,/^$AUTOSTART_END\$/d" "$AUTOSTART_PROFILE"
+    fi
+    tee -a "$AUTOSTART_PROFILE" >/dev/null <<EOF
+$AUTOSTART_BEGIN
+if [[ -z "\$WAYLAND_DISPLAY" && "\$(tty)" == "/dev/tty1" ]]; then
     if uwsm check may-start; then
         exec uwsm start hyprland.desktop >/dev/null 2>&1
     fi
 fi
+$AUTOSTART_END
 EOF
 fi
 
@@ -618,7 +667,7 @@ fi
 # DONE
 # ============================================================
 # archlinux.sh left wheel passwordless for the unattended steps; ask for the
-# password again from here on.
-sudo sed -i 's/^%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
-
-sudo reboot
+# password again from here on. Reverted and rebooted in one sudo call: once
+# NOPASSWD is gone a separate `sudo reboot` would ask for the password, since
+# the `sudo -v` at the top leaves no timestamp while NOPASSWD applies.
+sudo bash -c "sed -i 's/^%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers && systemctl reboot"

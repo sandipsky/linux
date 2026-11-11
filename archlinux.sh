@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
-# Fresh Arch Linux install (systemd-boot, Intel + NVIDIA laptop). In a VM the
-# laptop hardware pieces are skipped, see VM DETECTION.
-#
-# Leaves the wheel group with passwordless sudo so that hyprland.sh can run
-# unattended; hyprland.sh puts the password prompt back at its end. If
-# hyprland.sh is never run, revert it by hand:
+# Fresh Arch Linux install (systemd-boot, Intel + NVIDIA laptop); a VM skips
+# the laptop hardware pieces. Leaves wheel with passwordless sudo so that
+# hyprland.sh can run unattended; it reverts that at its end. If hyprland.sh
+# is never run:
 #   sed -i 's/^%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 set -e
 
 # ============================================================
 # VM DETECTION
 # ============================================================
-# "oracle" for VirtualBox, "kvm"/"qemu"/"vmware"/... for other hypervisors,
-# "none" on bare metal. A VM gets none of the laptop hardware pieces: no CPU
-# microcode (the kernel doesn't load it under a hypervisor), no device
-# firmware, no Intel GPU drivers or i915 early KMS, no NVIDIA driver, no
-# headers/dkms (only the NVIDIA and VirtualBox-host modules build against
-# them), no audio power-save or battery charge threshold, and no prompts for
-# the NTFS data drive or the VirtualBox host.
+# "none" on bare metal; a VM skips every laptop hardware piece (microcode,
+# firmware, GPU drivers, dkms, power tweaks) and the NTFS/VirtualBox prompts.
 VIRT=$(systemd-detect-virt --vm 2>/dev/null) || VIRT=none
 if [[ "$VIRT" != none ]]; then
     echo "Running in a $VIRT VM: skipping the laptop hardware pieces."
@@ -34,9 +27,8 @@ if [[ "$VIRT" == none ]]; then
 fi
 read -p "Username: " NEW_USER
 read -p "Full Name: " NAME
-# Also root's password. Read without echo, and twice, since a typo can't be
-# seen. Set after the chroot (see PASSWORDS at the end), never pasted into
-# the generated chroot script.
+# Also root's password. Set after the chroot (see PASSWORDS), never pasted
+# into the generated chroot script.
 while :; do
     read -s -p "Password: " PASSWORD; echo
     read -s -p "Repeat password: " PASSWORD2; echo
@@ -56,9 +48,7 @@ fi
 # ============================================================
 # FILESYSTEM
 # ============================================================
-# Last stop before anything is written: the partitions must be block devices,
-# and the formatting is confirmed, since a typo above would wipe the wrong
-# partition.
+# Last stop before anything is written.
 for dev in "$EFI" "$ROOT" ${NTFS_DRIVE:+"$NTFS_DRIVE"}; do
     if [[ ! -b "$dev" ]]; then
         echo "ERROR: $dev is not a block device." >&2
@@ -79,13 +69,8 @@ mount "$EFI" /mnt/boot
 # ============================================================
 # MIRRORS
 # ============================================================
-# The live ISO ships a worldwide, unranked mirrorlist, so pacstrap often
-# pulls from a mirror half a planet away. Rank nearby HTTPS mirrors by
-# measured download rate with reflector (on the ISO), and pin the Nepali
-# mirror at the top since this machine lives in Nepal. pacstrap copies this
-# mirrorlist into the installed system, so it is ranked once here and the
-# chroot inherits it. Falls back to a static regional list if reflector
-# can't reach archlinux.org.
+# Rank nearby HTTPS mirrors by download rate, Nepali mirror pinned first;
+# pacstrap copies the mirrorlist into the installed system.
 NEPAL_MIRROR='Server = https://mirrors.nepalicloud.com/archlinux/$repo/os/$arch'
 if reflector --country Nepal,India,Bangladesh,Singapore --protocol https \
         --completion-percent 100 --age 12 --sort rate \
@@ -108,8 +93,7 @@ MIRRORS
 fi
 echo "Mirrors in use:"; grep ^Server /etc/pacman.d/mirrorlist | head -5
 
-# Fetch several packages at once on the live ISO too (pacstrap uses the
-# host pacman.conf for downloads).
+# pacstrap downloads with the host pacman.conf.
 sed -i 's/^#\?ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf
 
 # ============================================================
@@ -117,10 +101,7 @@ sed -i 's/^#\?ParallelDownloads.*/ParallelDownloads = 5/' /etc/pacman.conf
 # ============================================================
 pacman -Syy --noconfirm archlinux-keyring
 
-# Bare metal only (see VM DETECTION): microcode, device firmware, the Intel
-# GPU's Vulkan and VA-API drivers, and the headers + dkms that
-# nvidia-open-dkms and virtualbox-host-dkms build against. A VM's virtual GPU
-# renders through plain mesa.
+# Bare metal only: microcode, firmware, Intel GPU drivers, headers + dkms.
 HW_PKGS=()
 if [[ "$VIRT" == none ]]; then
     HW_PKGS=(linux-headers linux-firmware intel-ucode vulkan-intel intel-media-driver dkms)
@@ -144,10 +125,8 @@ NTFS_UUID=""
 if [[ -n "$NTFS_DRIVE" ]]; then
     NTFS_UUID=$(blkid -s UUID -o value "$NTFS_DRIVE")
 fi
-# Boot entry pieces that only make sense on the laptop: the microcode initrd
-# (intel-ucode isn't installed in a VM, so the entry must not reference it),
-# i915.fastboot (keep the firmware's mode on the Intel panel, no modeset
-# flicker) and nvidia-drm.modeset=1 (the NVIDIA driver is bare-metal only).
+# Laptop-only boot entry pieces: the microcode initrd (intel-ucode isn't
+# installed in a VM), i915.fastboot (no modeset flicker), nvidia-drm.modeset.
 if [[ "$VIRT" == none ]]; then
     INITRDS=$'initrd  /intel-ucode.img\ninitrd  /initramfs-linux.img'
     HW_KARGS=" i915.fastboot=1 nvidia-drm.modeset=1"
@@ -166,12 +145,9 @@ set -e
 # ============================================================
 # PACKAGE INSTALL HELPER
 # ============================================================
-# Arch drops packages from the official repos to the AUR over time
-# (e.g. lib32-giflib, lib32-openal, lib32-v4l-utils). A plain pacman -S
-# then errors on the unknown package and set -e kills the whole install.
-# pkg_install skips repo-missing packages and defers them to yay later.
-# Packages that fail to install (pacman or AUR) end up in FAILED_PKGS,
-# written to ~/failed-packages.txt at the end.
+# Packages that moved from the repos to the AUR would fail pacman -S under
+# set -e: skip and defer them to yay. Every install failure lands in
+# FAILED_PKGS, written to ~/failed-packages.txt at the end.
 MISSING_PKGS=()
 FAILED_PKGS=()
 pkg_install() {
@@ -200,9 +176,7 @@ pkg_install() {
 # ============================================================
 # AUR INSTALL HELPER
 # ============================================================
-# yay exits nonzero when any build fails ("Manual intervention is required"),
-# which would kill the install under set -e. Install one package at a time
-# and collect failures into FAILED_PKGS instead of aborting.
+# One package at a time: a failed yay build must not abort the install.
 aur_install() {
     local pkg
     for pkg in "\$@"; do
@@ -216,18 +190,11 @@ aur_install() {
 # ============================================================
 # LAUNCHER HIDE HELPER
 # ============================================================
-# Hides system .desktop entries from the app launcher with NoDisplay=true
-# overrides in the user's ~/.local/share/applications (copies of the system
-# files, so the entries still resolve for MIME handling). The key goes in as
-# the last key of [Desktop Entry], right before any Actions= line: some
-# entries end with [Desktop Action] sections (an appended key would land in
-# the wrong section) and some carry an explicit NoDisplay=false that would
-# override an earlier NoDisplay=true (GKeyFile takes the last occurrence).
-# An entry whose package isn't installed yet (blueman, file-roller, uwsm, ...
-# come with hyprland.sh) gets a placeholder instead: a user-level file with
-# the same id masks the system entry the moment it appears, and Hidden=true
-# ("deleted at this level") needs no Exec. hyprland.sh swaps the placeholders
-# for real NoDisplay copies once the packages are in.
+# NoDisplay=true copies of system .desktop entries in ~/.local/share/applications
+# (copies, so MIME handling still resolves). The key goes right before any
+# Actions= line: it has to stay inside [Desktop Entry] and win over a later
+# NoDisplay=false. An entry whose package isn't installed yet gets a Hidden=true
+# placeholder, which hyprland.sh swaps for a real copy later.
 USER_APPS=/home/$NEW_USER/.local/share/applications
 hide_desktop_entry() {
     local name src dest
@@ -256,10 +223,8 @@ hide_desktop_entry() {
 # ============================================================
 # USER
 # ============================================================
-# The passwords and the full name are set by the outer script once this one
-# is done (see PASSWORDS there): this file is generated by an unquoted
-# heredoc, so a value with \$, ", \` or \\ would be re-expanded or mangled
-# here, and the password would sit in plaintext on the new root.
+# Passwords and the full name are set by the outer script (see PASSWORDS):
+# this file is an unquoted heredoc, so they can't be pasted in safely.
 useradd -m "$NEW_USER"
 usermod -aG wheel,video,audio,storage,power "$NEW_USER"
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
@@ -308,7 +273,6 @@ ZRAM
 # ============================================================
 # AUDIO POWER SAVE (idle codecs suspend; also needed for dGPU D3cold)
 # ============================================================
-# Bare metal only: a VM's emulated sound card saves no power.
 if [[ "$VIRT" == none ]]; then
     cat <<'SNDPM' > /etc/modprobe.d/audio-powersave.conf
 options snd_hda_intel power_save=1 power_save_controller=Y
@@ -325,8 +289,7 @@ pacman -Syy --noconfirm
 # ============================================================
 # BOOTLOADER
 # ============================================================
-# Installed EARLY so the system is always bootable, even if a later
-# (network/AUR) step fails under set -e.
+# Early, so the system boots even if a later step fails.
 bootctl install --esp-path=/boot
 
 cat <<LOADER > /boot/loader/loader.conf
@@ -343,12 +306,8 @@ $INITRDS
 options root=UUID=$ROOT_UUID rw quiet loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0 nowatchdog 8250.nr_uarts=0 mitigations=off$HW_KARGS
 ENTRY
 
-# Fallback entry with the full, non-autodetected initramfs (mkinitcpio -P
-# builds it anyway). The autodetect hook runs in this chroot against the live
-# ISO's loaded modules, so a module the installed system needs can be missed;
-# the menu is hidden (timeout 0) but holding Space during boot shows it, which
-# makes that recoverable without a live USB. Same options as arch.conf, so the
-# Plymouth step's 'splash' lands on both.
+# Fallback entry with the full initramfs: autodetect runs against the live
+# ISO's modules and can miss one. The menu is hidden; hold Space at boot.
 sed -e 's/^title .*/title   ArchLinux (fallback initramfs)/' \
     -e 's|/initramfs-linux.img|/initramfs-linux-fallback.img|' \
     /boot/loader/entries/arch.conf > /boot/loader/entries/arch-fallback.conf
@@ -356,8 +315,6 @@ sed -e 's/^title .*/title   ArchLinux (fallback initramfs)/' \
 # ============================================================
 # MKINITCPIO (early KMS = flicker-free boot)
 # ============================================================
-# i915 early KMS on bare metal. A VM has no Intel GPU: its virtual GPU driver
-# loads from the root filesystem as usual (Plymouth uses simpledrm until then).
 if [[ "$VIRT" == none ]]; then
     sed -i 's/^MODULES=.*/MODULES=(i915)/' /etc/mkinitcpio.conf
 fi
@@ -368,9 +325,6 @@ sed -i 's/^#\?COMPRESSION_OPTIONS=.*/COMPRESSION_OPTIONS=(-3)/' /etc/mkinitcpio.
 # ============================================================
 # NVIDIA (bare metal only)
 # ============================================================
-# A VM has no NVIDIA dGPU: the driver, its power management and the early-KMS
-# modules are skipped there (the outer script also leaves nvidia-drm.modeset=1
-# off the kernel command line).
 if [[ "$VIRT" != none ]]; then
     echo "Running in a $VIRT VM, skipping the NVIDIA driver."
 else
@@ -393,9 +347,8 @@ NVPM
 
     systemctl enable nvidia-suspend.service nvidia-resume.service || true
 
-    # Runtime D3 (kernel-side runtime PM so the dGPU powers off).
-    # add|bind: driver binds inside the initramfs (early KMS), where this rule
-    # isn't present -- matching "add" applies it on the udev coldplug replay.
+    # Runtime D3. add|bind: the driver binds inside the initramfs, where this
+    # rule isn't present, so "add" applies it on the udev coldplug replay.
     cat <<'NVUDEV' > /etc/udev/rules.d/80-nvidia-pm.rules
 # Enable runtime PM for the NVIDIA GPU and its HDMI audio function
 ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"
@@ -408,10 +361,8 @@ ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x0302
 ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300", TEST=="power/control", ATTR{power/control}="on"
 NVUDEV
 
-    # Early KMS for the dGPU too, and rebuild the initramfs whenever the
-    # driver changes (dkms builds the new module in its own hook, which runs
-    # first). No Target=linux: a kernel upgrade already triggers mkinitcpio's
-    # own hook, a second target would only rebuild every image twice.
+    # Early KMS for the dGPU, and an initramfs rebuild whenever the driver
+    # changes (no Target=linux: a kernel upgrade already triggers mkinitcpio's hook).
     sed -i 's/^MODULES=.*/MODULES=(i915 nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
 
     mkdir -p /etc/pacman.d/hooks
@@ -434,18 +385,10 @@ fi
 # ============================================================
 # PLYMOUTH BOOT SPLASH (optional)
 # ============================================================
-# The default theme (bgrt on Arch: spinner under the firmware's OEM logo;
-# plain spinner without BGRT) is cloned to <theme>-nologo WITHOUT
-# watermark.png, the distro logo drawn below the spinner. Cloning instead of
-# deleting the file from the package's own theme means a plymouth upgrade
-# can't bring the logo back. bgrt has no images of its own (its ImageDir
-# points at spinner), so the clone is built from whatever ImageDir the theme
-# uses. The clone also gets a bigger, lower spinner: the throbber-*.png
-# frames are redrawn as vectors at SPINNER_SIZE px (the two-step plugin has
-# no scale key, and upscaling the 32 px originals looks blurry) and
-# VerticalAlignment is set to SPINNER_VALIGN. Splash on boot only: the
-# poweroff/reboot/halt/kexec units are masked so shutdown goes straight to
-# the quiet, cursor-less console.
+# The default theme is cloned to <theme>-nologo without watermark.png (the
+# distro logo), so an upgrade can't bring the logo back, and gets a bigger,
+# lower spinner (frames redrawn as vectors: the plugin has no scale key).
+# Splash on boot only; the shutdown units are masked.
 if [[ "$INSTALL_PLYMOUTH" =~ ^[Nn] ]]; then
     echo "Skipping Plymouth."
 else
@@ -457,11 +400,8 @@ else
     SPINNER_VALIGN=.76
     SPINNER_FRAMES=30   # same count as upstream, so the rotation speed is unchanged
 
-    # One frame of the GNOME/Adwaita spinner as SVG on stdout (frame 1..SPINNER_FRAMES).
-    # Geometry measured from the upstream 32 px frames: a 4-unit ring of
-    # radius 9.5 on a 32-unit canvas, the track in #7c7c7c at 24 % opacity,
-    # and a white 96 degree arc with round caps that advances
-    # 360/SPINNER_FRAMES degrees per frame (clockwise, starting near 3 o'clock).
+    # One frame (1..SPINNER_FRAMES) of the Adwaita spinner as SVG, geometry
+    # measured from the upstream 32 px frames.
     spinner_frame_svg() {
         awk -v n="\$1" -v frames="\$SPINNER_FRAMES" 'BEGIN {
             pi = atan2(0, -1); r = 9.5; sweep = 96
@@ -474,7 +414,6 @@ else
         }'
     }
 
-    # plymouth hook right after systemd, and 'splash' on the kernel command line.
     sed -i 's/^HOOKS=(systemd /HOOKS=(systemd plymouth /' /etc/mkinitcpio.conf
     sed -i '/^options /s/\$/ splash/' /boot/loader/entries/arch.conf /boot/loader/entries/arch-fallback.conf
 
@@ -503,8 +442,6 @@ else
     grep -q '^VerticalAlignment=' "\$DST/\$THEME-nologo.plymouth" \
         || sed -i "/^\[two-step\]/a VerticalAlignment=\$SPINNER_VALIGN" "\$DST/\$THEME-nologo.plymouth"
 
-    # Bigger spinner: replace the clone's throbber-*.png with frames rendered
-    # from vector art at SPINNER_SIZE (the package's own frames stay untouched).
     if compgen -G "\$DST/throbber-*.png" >/dev/null; then
         echo "Rendering \$SPINNER_FRAMES spinner frames at \${SPINNER_SIZE}px"
         TMP=\$(mktemp -d)
@@ -520,20 +457,16 @@ else
         echo "theme has no throbber-*.png frames, spinner size left as is"
     fi
 
-    # Set the clone as default. No -R: the initramfs is rebuilt once, below,
-    # with the plymouth hook in place.
+    # No -R: the initramfs is rebuilt once, below.
     plymouth-set-default-theme "\$THEME-nologo"
 
-    # Splash at boot only.
     systemctl mask plymouth-poweroff.service plymouth-reboot.service plymouth-halt.service plymouth-kexec.service
 fi
 
 # ============================================================
 # INITRAMFS
 # ============================================================
-# One rebuild for everything above: the early-KMS modules, the hook list
-# (plymouth included when chosen) and the compression settings. pacstrap
-# built the images with the stock config.
+# One rebuild for everything above.
 mkinitcpio -P
 
 # ============================================================
@@ -549,10 +482,7 @@ rm -rf /tmp/yay
 # ============================================================
 # POLKIT: NO PASSWORD PROMPTS FOR WHEEL
 # ============================================================
-# Every polkit action (mounting the NTFS drive and other internal disks from
-# Nautilus, power profiles, package installs from GUI tools, ...) is granted
-# to wheel without a password. Deliberately this broad: single-user laptop,
-# and $NEW_USER is the only wheel member.
+# Deliberately broad: single-user laptop, $NEW_USER is the only wheel member.
 cat <<'POLKIT' > /etc/polkit-1/rules.d/49-nopasswd_global.rules
 polkit.addRule(function(action, subject) {
     if (subject.isInGroup("wheel")) {
@@ -566,9 +496,8 @@ chmod 644 /etc/polkit-1/rules.d/49-nopasswd_global.rules
 if [[ -n "$NTFS_DRIVE" ]]; then
     mkdir -p /mnt/HOME
     echo "UUID=$NTFS_UUID /mnt/HOME auto nosuid,nodev,nofail,x-gvfs-show 0 0" >> /etc/fstab
-    # Not mounted here: nothing in the install needs it, and a dirty or
-    # hibernated Windows volume would fail the mount and abort the script.
-    # nofail only covers a missing device, not a refused mount.
+    # Not mounted here: a dirty or hibernated Windows volume would refuse the
+    # mount and abort the script (nofail only covers a missing device).
 else
     echo "No separate NTFS drive specified, skipping..."
 fi
@@ -576,7 +505,6 @@ fi
 # ============================================================
 # BATTERY CHARGE THRESHOLD
 # ============================================================
-# Bare metal only: a VM has no battery, so the unit would only fail at boot.
 # Enabled in SERVICES below.
 if [[ "$VIRT" == none ]]; then
     cat <<'BATTERY' > /etc/systemd/system/battery-charge-threshold.service
@@ -603,7 +531,6 @@ zsh-syntax-highlighting \
 zsh-autosuggestions \
 starship
 
-# Set zsh as default shell for user
 chsh -s /bin/zsh "$NEW_USER"
 
 cat <<'ZSHRC' > /home/$NEW_USER/.zshrc
@@ -629,8 +556,7 @@ chown $NEW_USER:$NEW_USER /home/$NEW_USER/.zshrc
 # WINE / GAMING STACK (optional)
 # ============================================================
 # lib32-giflib / lib32-openal / lib32-v4l-utils were dropped from multilib
-# (wine >=10 is WoW64: 32-bit Windows apps use 64-bit libs). Their AUR
-# builds are broken/pointless -- do not re-add them.
+# (wine >=10 is WoW64); their AUR builds are broken, do not re-add them.
 if [[ "$INSTALL_GAMING" =~ ^[Nn] ]]; then
     echo "Skipping the gaming stack."
 else
@@ -664,8 +590,6 @@ else
         python-protobuf \
         lutris
 
-    # The Intel GPU's Vulkan driver, 64- and 32-bit: bare metal only, like
-    # vulkan-intel in pacstrap (a VM has no Intel GPU).
     if [[ "$VIRT" == none ]]; then
         pkg_install vulkan-intel lib32-vulkan-intel
     fi
@@ -713,8 +637,7 @@ else
 
     usermod -aG docker $NEW_USER
 
-    # Best effort like the AUR builds: a registry outage must not abort the
-    # install. Not added to FAILED_PKGS, which is a yay list.
+    # Best effort: a registry outage must not abort the install.
     sudo -u "$NEW_USER" npm install -g @angular/cli --prefix=/home/$NEW_USER/.local \
         || echo "WARNING: npm install of @angular/cli failed; retry after reboot with: npm install -g @angular/cli --prefix=~/.local"
 
@@ -726,8 +649,6 @@ fi
 # ============================================================
 # LIBREOFFICE (optional)
 # ============================================================
-# Only Writer, Calc and Impress stay in the launcher; Start Center, Base,
-# Draw, Math and the XSLT filter dialog are hidden.
 if [[ "$INSTALL_OFFICE" =~ ^[Nn] ]]; then
     echo "Skipping LibreOffice."
 else
@@ -745,15 +666,8 @@ fi
 # ============================================================
 # VIRTUALBOX HOST (optional)
 # ============================================================
-# Arch dropped the prebuilt virtualbox-host-modules-arch package, so the
-# vboxdrv/vboxnetadp/vboxnetflt modules come from dkms (linux-headers is in
-# the base install, the same mechanism nvidia-open-dkms relies on) and
-# pacman's dkms hook rebuilds them on every kernel upgrade. The package's
-# modules-load.d file loads them at boot. virtualbox-guest-iso puts
-# VBoxGuestAdditions.iso where VirtualBox looks for it, so "Insert Guest
-# Additions CD image" works offline. vboxusers is needed for USB passthrough.
-# Never in a VM (INSTALL_VBOX is preset to n there, and dkms/linux-headers
-# aren't installed).
+# The host modules come from dkms (Arch dropped the prebuilt package); the
+# dkms hook rebuilds them on kernel upgrades. vboxusers is for USB passthrough.
 if [[ "$INSTALL_VBOX" =~ ^[Nn] ]]; then
     echo "Skipping VirtualBox."
 else
@@ -771,23 +685,16 @@ fi
 sudo -u "$NEW_USER" git config --global user.name "sandipsky"
 sudo -u "$NEW_USER" git config --global user.email "sandipshakya75@gmail.com"
 sudo -u "$NEW_USER" git config --global core.pager cat
-# Pushing over HTTPS needs a credential helper: with current curl, git drops
-# a token embedded in the clone URL after the first request of a push and
-# falls back to the helper. Clone as https://sandipsky:<token>@github.com/...
-# and the first push saves the token to ~/.git-credentials with no prompt;
-# a bare https://<token>@ URL isn't saved, so that push would ask instead.
+# Clone as https://sandipsky:<token>@github.com/... and the first push saves
+# the token to ~/.git-credentials; a bare https://<token>@ URL isn't saved.
 sudo -u "$NEW_USER" git config --global credential.helper store
 
 # ============================================================
 # HOME FOLDERS
 # ============================================================
-# The standard XDG user dirs (Documents, Downloads, Music, ...) plus
-# ~/Projects as an extra one: xdg-user-dirs-update only creates the standard
-# eight, but keeps local additions to user-dirs.dirs on its later runs, so the
-# XDG_PROJECTS_DIR line survives. The GTK bookmarks file gives Nautilus and
-# the GTK file chooser their sidebar folders; outside GNOME nothing seeds it
-# (xdg-user-dirs-gtk's autostart is OnlyShowIn=GNOME), so write it here.
-# Append-if-missing, so bookmarks added later are kept.
+# ~/Projects on top of the standard XDG dirs (xdg-user-dirs-update keeps the
+# extra line on later runs). Nothing seeds the GTK sidebar bookmarks outside
+# GNOME, so they are written here, append-if-missing.
 sudo -u "$NEW_USER" -H xdg-user-dirs-update
 USER_DIRS=/home/$NEW_USER/.config/user-dirs.dirs
 grep -q '^XDG_PROJECTS_DIR=' "\$USER_DIRS" 2>/dev/null \
@@ -809,22 +716,16 @@ aur_install google-chrome visual-studio-code-bin
 # ============================================================
 # SPOTIFY (+ adblock)
 # ============================================================
-# Both come from the AUR: spotify repackages the official .deb, and
-# spotify-adblock-git builds abba23/spotify-adblock into
-# /usr/lib/spotify-adblock.so (config in /etc/spotify-adblock/config.toml).
-# makepkg verifies the Spotify repo signature, so the signing key has to be
-# in the build user's keyring first. Best-effort: aur_install continues on
-# failure (did Spotify rotate its signing key? Compare the validpgpkeys line
-# in https://aur.archlinux.org/packages/spotify). A stale pubring lock from
-# an interrupted gpg run would make the import hang, so clear it first.
+# makepkg verifies the Spotify repo signature, so the key goes into the build
+# user's keyring first (build failing? compare validpgpkeys on the AUR page).
+# A stale pubring lock from an interrupted gpg run would hang the import.
 rm -f /home/$NEW_USER/.gnupg/public-keys.d/pubring.db.lock
 sudo -u "$NEW_USER" -H bash -c 'curl -sS https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.gpg | gpg --import -' \
     || echo "WARNING: could not import the Spotify signing key, the spotify build will fail"
 aur_install spotify spotify-adblock-git
 
-# One launcher entry with the adblocker preloaded: override spotify.desktop in
-# /usr/local/share/applications (outranks /usr/share) and hide the extra
-# "Spotify (adblock)" entry the AUR package ships.
+# One launcher entry with the adblocker preloaded (/usr/local/share outranks
+# /usr/share); the package's own "Spotify (adblock)" entry is hidden.
 if [[ -f /usr/share/applications/spotify.desktop && -f /usr/lib/spotify-adblock.so ]]; then
     mkdir -p /usr/local/share/applications
     cp /usr/share/applications/spotify.desktop /usr/local/share/applications/spotify.desktop
@@ -843,11 +744,8 @@ fi
 # ============================================================
 # LAUNCHER CLEANUP
 # ============================================================
-# Developer tools and utilities that arrive as dependencies and clutter the
-# app grid. Runs after every install step so it catches an entry no matter
-# which package pulled it in; entries not installed yet (the Qt developer
-# tools from qt6-tools, and blueman, file-roller, uwsm's uuctl, avahi, ...
-# that hyprland.sh brings in) get a placeholder, see hide_desktop_entry.
+# Dependency-pulled developer tools and utilities; entries not installed yet
+# (they come with hyprland.sh) get a placeholder.
 hide_desktop_entry \
     vim.desktop \
     lstopo.desktop cmake-gui.desktop \
@@ -865,14 +763,10 @@ hide_desktop_entry \
 # ============================================================
 # DNS - Cloudflare via systemd-resolved
 # ============================================================
-# Some routers hand out dead DNS servers via DHCP; glibc tries nameservers in
-# order with a 5 s timeout, so with no local cache every lookup stalls.
-# A global systemd-resolved config with Domains=~. outranks whatever DNS any
-# network's DHCP hands out, and resolved is a local cache that also skips
-# unresponsive servers. Trade-off: LAN hostnames only the router can resolve
-# won't resolve (mDNS/.local via Avahi is unaffected). /etc/resolv.conf is
-# pointed at resolved's stub after the chroot: arch-chroot bind-mounts the
-# live ISO's resolv.conf over it in here, so it can't be replaced yet.
+# Domains=~. makes these resolvers win over DHCP-provided DNS on every network
+# (dead router DNS servers would stall every lookup); resolved also caches.
+# LAN hostnames only the router knows won't resolve. /etc/resolv.conf is
+# pointed at the stub after the chroot (arch-chroot bind-mounts the ISO's).
 mkdir -p /etc/systemd/resolved.conf.d
 cat <<'DNSCONF' > /etc/systemd/resolved.conf.d/10-global-dns.conf
 # Prefer these resolvers on every network (Domains=~. outranks per-link
@@ -890,8 +784,7 @@ systemctl enable NetworkManager bluetooth power-profiles-daemon fstrim.timer
 if [[ "$VIRT" == none ]]; then
     systemctl enable battery-charge-threshold.service
 fi
-# Copy a newer systemd-boot from /usr/lib onto the ESP at the next boot after
-# a systemd upgrade (bootctl install only ran once, above).
+# Keeps the ESP's systemd-boot current after systemd upgrades.
 systemctl enable systemd-boot-update.service
 systemctl --global enable pipewire pipewire-pulse wireplumber
 
@@ -921,11 +814,8 @@ rm /mnt/next.sh
 # ============================================================
 # PASSWORDS AND FULL NAME (post-chroot)
 # ============================================================
-# Done out here, not in next.sh: that file is generated by an unquoted
-# heredoc, so a password with a dollar sign, double quote, backtick or
-# backslash would be re-expanded or mangled, and it would sit in plaintext on
-# the new root. chpasswd reads the pairs from stdin, so the password never
-# appears on a command line either.
+# Out here, not in next.sh: that file is an unquoted heredoc, so special
+# characters would be mangled and the password would sit on disk in plaintext.
 printf '%s:%s\n' "$NEW_USER" "$PASSWORD" | arch-chroot /mnt chpasswd
 printf '%s:%s\n' root "$PASSWORD" | arch-chroot /mnt chpasswd
 arch-chroot /mnt usermod -c "$NAME" "$NEW_USER"
@@ -933,9 +823,7 @@ arch-chroot /mnt usermod -c "$NAME" "$NEW_USER"
 # ============================================================
 # DNS STUB RESOLVER (post-chroot)
 # ============================================================
-# Every app, including browsers that read resolv.conf directly (Chromium),
-# goes through resolved's cache. Done out here because arch-chroot
-# bind-mounts the live ISO's /etc/resolv.conf into the chroot.
+# Out here because arch-chroot bind-mounts the live ISO's resolv.conf.
 ln -sf ../run/systemd/resolve/stub-resolv.conf /mnt/etc/resolv.conf
 
 # ============================================================

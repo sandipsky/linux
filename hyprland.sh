@@ -6,13 +6,11 @@ if [[ -z "${BASH_VERSION:-}" ]]; then
     echo "Run this script with bash, not sh: ./hyprland.sh"
     exit 1
 fi
-# System-level steps use sudo, but the script itself must run as the normal
-# user — yay and makepkg refuse to build packages as root.
+# yay and makepkg refuse to build packages as root.
 if [[ $EUID -eq 0 ]]; then
     echo "Run this as your normal user (./hyprland.sh), not with sudo — it asks for the password itself." >&2
     exit 1
 fi
-# The prompt is read from the terminal, so `curl ... | bash` can't work.
 if [[ ! -t 1 ]] || ! { : </dev/tty; } 2>/dev/null; then
     echo "This script needs an interactive terminal (it asks a question). Clone the repo and run: ./hyprland.sh"
     exit 1
@@ -30,15 +28,12 @@ fi
 # ============================================================
 # PROMPTS
 # ============================================================
-# All interactive input happens here, before the long unattended run.
 read -rp "Install SDDM login screen instead of direct login into Hyprland? [y/N]: " INSTALL_SDDM </dev/tty
 
 # ============================================================
 # SUDO
 # ============================================================
-# Ask for the sudo password once, up front, and keep the credential cache
-# fresh in the background — the pacman/yay/makepkg steps outlast sudo's
-# 15-minute timeout, and a mid-run re-prompt would stall the install.
+# One prompt up front; the keepalive outlasts sudo's 15-minute timeout.
 sudo -v
 ( while kill -0 "$$" 2>/dev/null; do sleep 60; sudo -n -v; done ) 2>/dev/null &
 SUDO_KEEPALIVE=$!
@@ -47,26 +42,11 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # ============================================================
 # PACKAGES
 # ============================================================
-# Compositor and session (uwsm), the Noctalia desktop shell, Wayland
-# utilities, the GNOME apps used with it, and the Adwaita GTK/icon themes
-# (adwaita-icon-theme pulls in adwaita-cursors, the cursor theme
-# config/uwsm/env and gtk-3.0/settings.ini select). Adwaita's grey folder
-# icons are swapped for Yaru's orange ones in the FOLDER ICONS step below.
-# luajit runs the Lua Hyprland config. nautilus-python and python-pillow run
-# the Nautilus extensions from the NAUTILUS EXTENSIONS step. qt5-wayland and
-# qt6-wayland are what lets Qt apps (OBS, qBittorrent, VLC, VirtualBox)
-# honour the QT_QPA_PLATFORM=wayland in config/uwsm/env; without them every
-# Qt app silently falls back to XWayland. qt6-5compat is the Qt 6 build of
-# the Qt 5 leftovers (Qt5Compat.GraphicalEffects: blur, glow, shadows) that
-# older QML, SDDM themes among them, still imports.
-#
-# noctalia (v5, in extra) is the bar, launcher, control center, notification
-# daemon, clipboard history, lock screen, idle handling, night light,
-# wallpaper and OSDs in one: no cliphist, hyprsunset or separate polkit agent
-# (config/noctalia/config.toml turns its built-in agent on). upower is its
-# optional dependency for the battery widget; power-profiles-daemon comes
-# from archlinux.sh. autostart.lua starts it, keybinds.lua drives it with
-# `noctalia msg`.
+# qt5-wayland and qt6-wayland let Qt apps honour QT_QPA_PLATFORM=wayland from
+# config/uwsm/env; qt6-5compat carries the Qt 5 leftovers (GraphicalEffects)
+# that older QML, SDDM themes included, imports. noctalia is the bar,
+# launcher, lock screen, notifications, clipboard, idle, night light and
+# wallpaper in one; upower is for its battery widget.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
@@ -99,12 +79,8 @@ sudo pacman -S --noconfirm --needed \
 # ============================================================
 # CLAUDE CODE
 # ============================================================
-# Downloaded first and run only if the download succeeded: piped straight
-# into bash, a failed curl hands bash an empty script and the install is
-# skipped without a word. stdin from /dev/null: the installer is written for
-# `curl | bash`, where stdin is the pipe and nothing can be read from the
-# terminal, so this keeps it that way and it can never block waiting for
-# input. Best effort either way, the desktop doesn't depend on it.
+# Best effort. stdin from /dev/null: the installer is written for `curl | bash`
+# and must never block waiting for terminal input.
 CLAUDE_INSTALLER=$(mktemp)
 if curl -fsSL https://claude.ai/install.sh -o "$CLAUDE_INSTALLER"; then
     bash "$CLAUDE_INSTALLER" </dev/null \
@@ -117,19 +93,14 @@ rm -f "$CLAUDE_INSTALLER"
 # ============================================================
 # CONFIG (config/ -> ~/.config)
 # ============================================================
-# Hyprland (Lua), Noctalia, uwsm session env, alacritty, fastfetch, vim,
-# gtk-3.0 settings, fontconfig and the AC-power user services. Noctalia's
-# config.toml holds only the overrides; everything else is its defaults, and
-# what is changed in its Settings window lands in
-# ~/.local/state/noctalia/settings.toml on top of it.
+# Noctalia's config.toml holds only the overrides; what is changed in its
+# Settings window lands in ~/.local/state/noctalia/settings.toml on top.
 mkdir -p "$HOME/.config"
 cp -r "$REPO_DIR"/config/* "$HOME/.config/"
 
 # fastfetch's logo path carries an absolute path.
 sed -i "s|USERNAME|$USERNAME|g" "$HOME/.config/fastfetch/config.jsonc"
 
-# fastfetch on every new interactive terminal. ~/.zshrc itself is written by
-# archlinux.sh, so only append the block if it isn't there yet.
 ZSHRC="$HOME/.zshrc"
 if ! grep -q 'fastfetch' "$ZSHRC" 2>/dev/null; then
     tee -a "$ZSHRC" >/dev/null <<'EOF'
@@ -142,9 +113,7 @@ fi
 # ============================================================
 # AC POWER PROFILE SWITCHING
 # ============================================================
-# config/systemd/user/acpoweron.service and acpoweroff.service switch the
-# power profile, brightness and the panel's refresh rate with the charger.
-# udev runs as root, so it starts them in the user's manager via --machine.
+# udev runs as root, so the user services are started via --machine.
 POWER_RULE=/etc/udev/rules.d/99-power.rules
 sudo tee "$POWER_RULE" >/dev/null <<EOF
 # Written by hyprland.sh: start the user's acpoweron/acpoweroff services
@@ -157,14 +126,10 @@ sudo udevadm control --reload
 # ============================================================
 # GTK4 dGPU LAUNCH STALL
 # ============================================================
-# GTK's Vulkan renderer (4.16+) enumerates every GPU at startup, waking the
-# runtime-suspended NVIDIA dGPU — an ~1.5 s stall on each GTK4 app launch even
-# though rendering happens on the Intel iGPU. /etc/environment (PAM) covers
-# the whole session — Hyprland, its children, AND dbus-/systemd-activated
-# apps — so this is the single place the fix lives (not environment.lua,
-# which would miss the dbus-activated ones).
-# Replace-or-append so a stale hand-set value gets corrected on re-runs; the
-# leading \n keeps the entry intact even if the file lacks a trailing newline.
+# GTK's Vulkan renderer enumerates every GPU at startup, waking the suspended
+# dGPU (~1.5 s stall per GTK4 launch). /etc/environment also covers
+# dbus-activated apps, which environment.lua would miss. The leading \n keeps
+# the entry intact if the file lacks a trailing newline.
 if grep -q '^GDK_DISABLE=' /etc/environment 2>/dev/null; then
     sudo sed -i 's/^GDK_DISABLE=.*/GDK_DISABLE=vulkan/' /etc/environment
 else
@@ -183,10 +148,8 @@ if [[ -f /etc/bluetooth/main.conf ]]; then
     fi
 fi
 
-# systemd-rfkill persists rfkill soft blocks across reboots (e.g. one left by
-# an airplane-mode toggle), and BlueZ can't power a blocked adapter — the bar
-# widget's Bluetooth toggle would silently fail forever. Clear the block every
-# boot; the adapter still stays off until toggled (AutoEnable=false above).
+# systemd-rfkill persists soft blocks across reboots and BlueZ can't power a
+# blocked adapter, so the bar's toggle would silently fail. Clear it every boot.
 sudo tee /etc/systemd/system/bluetooth-rfkill-unblock.service >/dev/null <<'EOF'
 [Unit]
 Description=Clear persisted Bluetooth rfkill soft block
@@ -212,15 +175,8 @@ sudo gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
 # ============================================================
 # FOLDER ICONS (icons/folder)
 # ============================================================
-# Nautilus (and every GTK file chooser) shows Ubuntu's orange Yaru folders
-# instead of Adwaita's grey ones. icons/folder is a tiny icon theme that
-# carries only Yaru's places/ folder PNGs (folder, folder-open, the XDG user
-# dirs, user-home, user-desktop, ...) at every size and Inherits Adwaita, so
-# every other icon still comes from Adwaita. It is installed as its own
-# theme rather than into hicolor: Adwaita ships folder icons of its own, and
-# the lookup walks the selected theme first, then its parents, so hicolor
-# would never win. The DESKTOP SETTINGS step below selects it (gsettings),
-# as does config/gtk-3.0/settings.ini for GTK3.
+# Yaru's orange folder icons as a tiny theme that Inherits Adwaita. Its own
+# theme, not hicolor: Adwaita ships folder icons and is looked up first.
 FOLDER_THEME_DIR=/usr/share/icons/Yaru-folders
 sudo rm -rf "$FOLDER_THEME_DIR"
 sudo cp -r "$REPO_DIR/icons/folder" "$FOLDER_THEME_DIR"
@@ -231,9 +187,7 @@ sudo gtk-update-icon-cache -q -t -f "$FOLDER_THEME_DIR" 2>/dev/null || true
 # ============================================================
 # FONTS (fonts/microsoft)
 # ============================================================
-# Fira Sans, JetBrains Mono and the Noto family come from archlinux.sh;
-# the Microsoft fonts (Calibri, Cambria, Consolas, Tahoma, Segoe icons) have
-# no package.
+# The Microsoft fonts have no package; the rest come from archlinux.sh.
 sudo install -d -m 0755 /usr/share/fonts/microsoft
 sudo install -m 0644 "$REPO_DIR"/fonts/microsoft/*.tt[cf] /usr/share/fonts/microsoft/
 sudo fc-cache -f
@@ -241,13 +195,8 @@ sudo fc-cache -f
 # ============================================================
 # LAUNCHER CLEANUP
 # ============================================================
-# archlinux.sh hid the launcher entries of packages that weren't installed
-# yet (blueman, file-roller, uwsm, ...) with placeholder files in
-# ~/.local/share/applications. Now that they are in, swap each placeholder
-# for a NoDisplay copy of the real entry so MIME associations still resolve
-# (e.g. "Open With -> Archive Manager"). Same key placement as archlinux.sh's
-# hide_desktop_entry: before any Actions= line, as the last key of
-# [Desktop Entry].
+# Swap archlinux.sh's placeholders for NoDisplay copies of the now-installed
+# entries, so MIME associations still resolve. Same key placement as there.
 for dest in "$APPS_DIR"/*.desktop; do
     [[ -f "$dest" ]] && grep -q '^# placeholder by archlinux.sh' "$dest" || continue
     src="/usr/share/applications/$(basename "$dest")"
@@ -264,14 +213,11 @@ done
 # ============================================================
 # ALACRITTY AS "TERMINAL"
 # ============================================================
-# A user-level copy of Alacritty.desktop (same id, so it outranks the system
-# entry in the launcher, the bar and "Open in Terminal") renamed to Terminal,
-# with the Terminal icon from icons/ (installed above) by absolute path, so
-# no icon theme can shadow it.
+# User-level copy (same id, so it outranks the system entry) renamed to
+# Terminal, icon by absolute path so no icon theme can shadow it.
 if [[ -f /usr/share/applications/Alacritty.desktop ]]; then
     cp /usr/share/applications/Alacritty.desktop "$APPS_DIR/Alacritty.desktop"
-    # Only the first Name= (the [Desktop Entry] one); the "New Terminal"
-    # action below it keeps its name.
+    # Only the first Name=; the "New Terminal" action keeps its own.
     sed -i -e '0,/^Name=/s/^Name=.*/Name=Terminal/' \
            -e "s|^Icon=.*|Icon=$ICON_DIR/org.gnome.Terminal.svg|" \
            "$APPS_DIR/Alacritty.desktop"
@@ -284,19 +230,9 @@ update-desktop-database "$APPS_DIR" 2>/dev/null || true
 # ============================================================
 # NAUTILUS EXTENSIONS (nautilus/)
 # ============================================================
-# nautilus-python loads every .py in its extensions dir at startup:
-# - open-in.py: "Open in Code" (VS Code, installed by archlinux.sh) and "Open
-#   in Terminal" (Alacritty) in the right-click menu of the folder background
-#   and of a selected folder; selected files get "Open in Code" only. Nautilus
-#   has no "Open in Terminal" of its own (that used to come from
-#   gnome-terminal's extension).
-# - folder-preview.py: folder icons that preview the first image inside,
-#   drawn into the Yaru folder from the FOLDER ICONS step the way Windows
-#   Explorer and Dolphin show folders. It hands the folders Nautilus shows to
-#   ~/.local/bin/folder-preview, which draws the previews with Pillow into
-#   ~/.cache/folder-previews and sets them as the folders' custom icons.
-#   Images added to or removed from a folder show on its icon once that
-#   folder has been opened, or after F5 in the folder that contains it.
+# open-in.py: "Open in Code" and "Open in Terminal" in the right-click menu.
+# folder-preview.py: folder icons previewing the first image inside, drawn by
+# ~/.local/bin/folder-preview (Pillow) into ~/.cache/folder-previews.
 NAUTILUS_EXT_DIR="$HOME/.local/share/nautilus-python/extensions"
 mkdir -p "$NAUTILUS_EXT_DIR"
 cp "$REPO_DIR"/nautilus/*.py "$NAUTILUS_EXT_DIR/"
@@ -305,21 +241,9 @@ install -Dm755 "$REPO_DIR/nautilus/folder-preview" "$HOME/.local/bin/folder-prev
 # ============================================================
 # DESKTOP SETTINGS
 # ============================================================
-# Qt apps (OBS, qBittorrent, VirtualBox, VLC) are scaled to 125% globally via
-# QT_SCALE_FACTOR in config/uwsm/env (uwsm exports it into the systemd user
-# environment, so it reaches apps however they are launched — Hyprland's own
-# `env` only covers its direct children) and get Fira Sans via
-# config/fontconfig/conf.d/50-sans-serif-fira.conf — no per-app
-# .desktop overrides.
-#
-# Nautilus: expandable folders in list view, "Create Link" and "Delete
-# Permanently" in the right-click menu, and folders sorted before files.
-# The sort key is set for GTK 3 too, not just GTK 4: on its first start
-# Nautilus copies the GTK 3 value (default false) over the GTK 4 one
-# (migrated-gtk-settings), and the GTK 3 file chooser then matches as well.
-#
-# Text Editor: JetBrains Mono 13 (installed by archlinux.sh) instead of the
-# system font, line numbers and the current line highlighted.
+# Qt apps are scaled and get Fira Sans through config/uwsm/env and fontconfig,
+# no per-app overrides. The Nautilus sort key is set for GTK 3 too: on first
+# start Nautilus copies the GTK 3 value over the GTK 4 one.
 dbus-run-session -- bash <<'EOF'
 gsettings set org.gnome.desktop.interface gtk-theme "Adwaita-dark"
 gsettings set org.gnome.desktop.interface icon-theme 'Yaru-folders'
@@ -344,14 +268,10 @@ xdg-mime default org.gnome.Loupe.desktop image/webp
 xdg-mime default org.gnome.TextEditor.desktop text/plain
 xdg-mime default org.gnome.TextEditor.desktop application/x-shellscript
 
-# PDFs always open in Evince, whether or not LibreOffice was installed by
-# archlinux.sh (LibreOffice Draw registers itself for application/pdf and
-# would otherwise grab the association).
+# LibreOffice Draw would otherwise grab application/pdf.
 xdg-mime default org.gnome.Evince.desktop application/pdf
 
-# Account picture for Noctalia (avatar_path = ~/.face in its config.toml:
-# control center, launcher, lock screen) and the SDDM greeter, if the repo
-# carries one (profile.png next to this script).
+# ~/.face is Noctalia's avatar_path and what the SDDM greeter shows.
 if [[ -f "$REPO_DIR/profile.png" ]]; then
     cp "$REPO_DIR/profile.png" "$HOME/.face"
 fi
@@ -359,8 +279,6 @@ fi
 # ============================================================
 # GPU DETECTION (hybrid Intel + NVIDIA)
 # ============================================================
-# Finds the boot GPU (the iGPU wired to the panel) and whether an NVIDIA dGPU
-# is present. Used by the iGPU symlink below and by SDDM's Xorg config.
 IGPU_PCI="" IGPU_BUSID="" HAS_NVIDIA=""
 for dev in /sys/bus/pci/devices/*; do
     [[ "$(cat "$dev/class")" == 0x03* ]] || continue
@@ -377,13 +295,9 @@ done
 # ============================================================
 # HYPRLAND ON THE iGPU ONLY
 # ============================================================
-# /dev/dri/igpu points at the iGPU's DRM card; config/uwsm/env sets
-# AQ_DRM_DEVICES to it when it exists, so Hyprland never opens the NVIDIA
-# dGPU and the dGPU can runtime-suspend. A stable name is needed because
-# card0/card1 numbering can swap between boots, and the /dev/dri/by-path
-# names contain colons, which AQ_DRM_DEVICES uses as its separator. Without an
-# NVIDIA dGPU (an Intel-only machine) the rule is removed, so the symlink
-# never exists and Hyprland uses its defaults.
+# config/uwsm/env points AQ_DRM_DEVICES at /dev/dri/igpu when it exists, so
+# Hyprland never opens the dGPU. A stable name: card0/card1 can swap between
+# boots, and the by-path names contain colons, AQ_DRM_DEVICES's separator.
 IGPU_RULE=/etc/udev/rules.d/70-igpu-symlink.rules
 if [[ -n "$HAS_NVIDIA" && -n "$IGPU_PCI" ]]; then
     sudo tee "$IGPU_RULE" >/dev/null <<EOF
@@ -400,15 +314,10 @@ sudo udevadm control --reload
 # ============================================================
 # LOGIN: SDDM or direct login
 # ============================================================
-# Default is direct login: tty1 autologin via an agetty override, then the
-# login profile execs Hyprland through uwsm. With SDDM chosen, sddm takes
-# over tty1 (sddm.service conflicts with getty@tty1.service) and the two
-# direct-login pieces are not written. Each branch also undoes the other's
-# pieces, so a re-run that switches the answer takes effect. Nothing is
-# started live either way: it takes effect at the reboot below.
+# Default is tty1 autologin + uwsm from the login profile; with SDDM, sddm
+# takes tty1 instead. Each branch undoes the other's pieces, so a re-run that
+# switches the answer takes effect at the reboot below.
 GETTY_OVERRIDE=/etc/systemd/system/getty@tty1.service.d/override.conf
-# The uwsm autostart block in the login profile sits between these markers,
-# so it can be replaced or removed without touching the rest of the file.
 AUTOSTART_BEGIN='# >>> hyprland.sh: uwsm autostart on tty1 >>>'
 AUTOSTART_END='# <<< hyprland.sh: uwsm autostart on tty1 <<<'
 if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
@@ -416,17 +325,11 @@ if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
     STATE_FILE=/var/lib/sddm/state.conf
     UWSM_SESSION=/usr/share/wayland-sessions/hyprland-uwsm.desktop
 
-    # Plain SDDM with its default greeter: no theme is vendored or selected.
     sudo pacman -S --noconfirm --needed sddm
 
-    # The greeter's Xorg keeps running for the whole session after login, and
-    # left to autoconfigure it also opens the NVIDIA dGPU as a PRIME GPU
-    # screen, which keeps the dGPU out of runtime D3 (stuck in P0, ~13 W at
-    # 0% load, heating the shared heatpipes). Give that Xorg a config of its
-    # own (-config, via ServerArguments below) that drives only the boot GPU
-    # (the iGPU wired to the panel) and adds no other GPUs. Only SDDM's X
-    # server reads it, so other X servers still see both GPUs. Skipped
-    # without an NVIDIA dGPU.
+    # Left to autoconfigure, the greeter's Xorg (alive for the whole session)
+    # also opens the NVIDIA dGPU and keeps it out of runtime D3. Give it a config
+    # that drives only the iGPU; only SDDM's X server reads it.
     SDDM_XORG_CONF=/etc/X11/sddm-igpu.conf
     if [[ -n "$HAS_NVIDIA" && -n "$IGPU_BUSID" ]]; then
         sudo tee "$SDDM_XORG_CONF" >/dev/null <<EOF
@@ -449,25 +352,21 @@ EOF
         SDDM_X11_ARGS="-nolisten tcp"
     fi
 
-    # Set the X server arguments (SDDM's default is -nolisten tcp). Arch ships
-    # no /etc/sddm.conf; drop-ins in /etc/sddm.conf.d are read in name order
-    # with later files winning, so the zz- prefix keeps this setting on top of
-    # any other drop-in. No [Theme] section: SDDM's default greeter is used.
+    # Drop-ins in /etc/sddm.conf.d are read in name order, so zz- keeps this on
+    # top. No [Theme] section: SDDM's default greeter.
     sudo mkdir -p /etc/sddm.conf.d
     sudo tee /etc/sddm.conf.d/zz-hyprland.conf >/dev/null <<EOF
 [X11]
 ServerArguments=$SDDM_X11_ARGS
 EOF
 
-    # The greeter runs as the sddm user and can't read ~/.face inside a 0700
-    # home, so the avatar goes to /usr/share/sddm/faces/.
+    # The greeter can't read ~/.face inside a 0700 home.
     if [[ -f "$REPO_DIR/profile.png" ]]; then
         sudo install -Dm644 "$REPO_DIR/profile.png" "$FACES_DIR/$USERNAME.face.icon"
     fi
 
-    # Preselect the user and the uwsm-managed Hyprland session, so the first
-    # login matches what the tty path launches. An existing state file is
-    # SDDM's remembered choice — leave it alone.
+    # Preselect the user and the uwsm session; an existing state file is SDDM's
+    # remembered choice.
     if sudo test -f "$STATE_FILE"; then
         echo "$STATE_FILE exists — leaving SDDM's remembered choice alone"
     elif [[ ! -f "$UWSM_SESSION" ]]; then
@@ -484,9 +383,7 @@ EOF
         fi
     fi
 
-    # Undo an earlier direct-login run: the tty1 autologin override and the
-    # autostart block in the login profiles (sddm.service would win over
-    # getty@tty1 anyway, but a stale override is confusing).
+    # Undo an earlier direct-login run.
     if sudo test -f "$GETTY_OVERRIDE"; then
         sudo rm -f "$GETTY_OVERRIDE"
         sudo rmdir "$(dirname "$GETTY_OVERRIDE")" 2>/dev/null || true
@@ -500,8 +397,7 @@ EOF
 
     sudo systemctl enable sddm.service
 else
-    # Undo an earlier SDDM run: enabled, sddm.service would take tty1 over
-    # the autologin below.
+    # Undo an earlier SDDM run.
     if systemctl is-enabled -q sddm.service 2>/dev/null; then
         sudo systemctl disable sddm.service
     fi
@@ -514,15 +410,12 @@ ExecStart=-/usr/bin/agetty --autologin $USERNAME --skip-login --nonewline --nois
 Type=idle
 EOF
 
-    # archlinux.sh made zsh the login shell, so this is normally ~/.zprofile.
     LOGIN_SHELL=$(getent passwd "$USERNAME" | cut -d: -f7)
     if [[ "$(basename "$LOGIN_SHELL")" == "zsh" ]]; then
         AUTOSTART_PROFILE="$HOME/.zprofile"
     else
         AUTOSTART_PROFILE="$HOME/.bash_profile"
     fi
-    # Replace-or-append between the marker lines: a re-run updates the block
-    # and keeps whatever else the profile holds.
     if [[ -f "$AUTOSTART_PROFILE" ]]; then
         sed -i "/^$AUTOSTART_BEGIN\$/,/^$AUTOSTART_END\$/d" "$AUTOSTART_PROFILE"
     fi
@@ -540,8 +433,6 @@ fi
 # ============================================================
 # DONE
 # ============================================================
-# archlinux.sh left wheel passwordless for the unattended steps; ask for the
-# password again from here on. Reverted and rebooted in one sudo call: once
-# NOPASSWD is gone a separate `sudo reboot` would ask for the password, since
-# the `sudo -v` at the top leaves no timestamp while NOPASSWD applies.
+# Put the sudo password prompt back (archlinux.sh left wheel passwordless) and
+# reboot in the same sudo call: afterwards a separate sudo would ask again.
 sudo bash -c "sed -i 's/^%wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers && systemctl reboot"

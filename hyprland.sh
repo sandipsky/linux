@@ -22,8 +22,8 @@ USERNAME=$(id -un)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPS_DIR="$HOME/.local/share/applications"
 
-if [[ ! -d "$REPO_DIR/config/hypr" || ! -d "$REPO_DIR/sddm-themes/Elegant" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" || ! -f "$REPO_DIR/nautilus/folder-preview" ]]; then
-    echo "config/, sddm-themes/, icons/, fonts/ and nautilus/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
+if [[ ! -d "$REPO_DIR/config/hypr" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" || ! -f "$REPO_DIR/nautilus/folder-preview" ]]; then
+    echo "config/, icons/, fonts/ and nautilus/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
     exit 1
 fi
 
@@ -31,7 +31,7 @@ fi
 # PROMPTS
 # ============================================================
 # All interactive input happens here, before the long unattended run.
-read -rp "Install SDDM login screen (Elegant theme) instead of direct login into Hyprland? [y/N]: " INSTALL_SDDM </dev/tty
+read -rp "Install SDDM login screen instead of direct login into Hyprland? [y/N]: " INSTALL_SDDM </dev/tty
 
 # ============================================================
 # SUDO
@@ -56,7 +56,9 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # the Nautilus extensions from the NAUTILUS EXTENSIONS step. qt5-wayland and
 # qt6-wayland are what lets Qt apps (OBS, qBittorrent, VLC, VirtualBox)
 # honour the QT_QPA_PLATFORM=wayland in config/uwsm/env; without them every
-# Qt app silently falls back to XWayland.
+# Qt app silently falls back to XWayland. qt6-5compat is the Qt 6 build of
+# the Qt 5 leftovers (Qt5Compat.GraphicalEffects: blur, glow, shadows) that
+# older QML, SDDM themes among them, still imports.
 #
 # noctalia (v5, in extra) is the bar, launcher, control center, notification
 # daemon, clipboard history, lock screen, idle handling, night light,
@@ -71,6 +73,7 @@ sudo pacman -S --noconfirm --needed \
     xdg-desktop-portal-hyprland \
     qt5-wayland \
     qt6-wayland \
+    qt6-5compat \
     uwsm \
     noctalia \
     upower \
@@ -395,7 +398,7 @@ fi
 sudo udevadm control --reload
 
 # ============================================================
-# LOGIN: SDDM (Elegant theme) or direct login
+# LOGIN: SDDM or direct login
 # ============================================================
 # Default is direct login: tty1 autologin via an agetty override, then the
 # login profile execs Hyprland through uwsm. With SDDM chosen, sddm takes
@@ -409,42 +412,12 @@ GETTY_OVERRIDE=/etc/systemd/system/getty@tty1.service.d/override.conf
 AUTOSTART_BEGIN='# >>> hyprland.sh: uwsm autostart on tty1 >>>'
 AUTOSTART_END='# <<< hyprland.sh: uwsm autostart on tty1 <<<'
 if [[ "$INSTALL_SDDM" =~ ^[Yy] ]]; then
-    THEME=Elegant
-    THEME_DIR=/usr/share/sddm/themes/Elegant
-    THEME_SRC="$REPO_DIR/sddm-themes/Elegant"
     FACES_DIR=/usr/share/sddm/faces
     STATE_FILE=/var/lib/sddm/state.conf
     UWSM_SESSION=/usr/share/wayland-sessions/hyprland-uwsm.desktop
 
-    # qt6-5compat: the theme's blur/glow effects come from
-    # Qt5Compat.GraphicalEffects (ported from Qt5's QtGraphicalEffects, see
-    # the imports in sddm-themes/Elegant/*.qml). The theme renders in Fira
-    # Sans (installed by archlinux.sh); icons come from the Tabler icon font
-    # bundled in its fonts/. The greeter's cursor is Adwaita, Qt's default,
-    # so no cursor setup is needed.
+    # Plain SDDM with its default greeter: no theme is vendored or selected.
     sudo pacman -S --noconfirm --needed sddm
-    sudo pacman -S --noconfirm --needed --asdeps qt6-5compat
-
-    # Install the theme, keeping what was set by hand in the theme dir on an
-    # earlier run (theme.conf.user overrides theme.conf without touching the
-    # vendored file, and a copied background image).
-    KEEP=$(mktemp -d)
-    for f in "$THEME_DIR"/theme.conf.user "$THEME_DIR"/background.*; do
-        [[ -f "$f" ]] && sudo cp -p "$f" "$KEEP/"
-    done
-    sudo rm -rf /usr/share/sddm/themes/Elegant
-    sudo mkdir -p /usr/share/sddm/themes
-    sudo cp -r "$THEME_SRC" "$THEME_DIR"
-    for f in "$KEEP"/*; do
-        [[ -f "$f" ]] && sudo cp -p "$f" "$THEME_DIR/"
-    done
-    sudo rm -rf "${KEEP:?}"
-    sudo chown -R root:root "$THEME_DIR"
-    sudo chmod -R u=rwX,go=rX "$THEME_DIR"
-
-    # The theme's accent is its own default (theme.conf) unless an accent=
-    # line is put in theme.conf.user by hand; Noctalia's palette is not read,
-    # it keeps its colours in its own state and templates.
 
     # The greeter's Xorg keeps running for the whole session after login, and
     # left to autoconfigure it also opens the NVIDIA dGPU as a PRIME GPU
@@ -476,15 +449,12 @@ EOF
         SDDM_X11_ARGS="-nolisten tcp"
     fi
 
-    # Select the theme and the X server arguments (SDDM's default is
-    # -nolisten tcp). Arch ships no /etc/sddm.conf; drop-ins in
-    # /etc/sddm.conf.d are read in name order with later files winning, so the
-    # zz- prefix keeps these settings on top of any other drop-in.
+    # Set the X server arguments (SDDM's default is -nolisten tcp). Arch ships
+    # no /etc/sddm.conf; drop-ins in /etc/sddm.conf.d are read in name order
+    # with later files winning, so the zz- prefix keeps this setting on top of
+    # any other drop-in. No [Theme] section: SDDM's default greeter is used.
     sudo mkdir -p /etc/sddm.conf.d
     sudo tee /etc/sddm.conf.d/zz-hyprland.conf >/dev/null <<EOF
-[Theme]
-Current=$THEME
-
 [X11]
 ServerArguments=$SDDM_X11_ARGS
 EOF

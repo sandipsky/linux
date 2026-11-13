@@ -718,11 +718,20 @@ aur_install google-chrome visual-studio-code-bin
 # ============================================================
 # makepkg verifies the Spotify repo signature, so the key goes into the build
 # user's keyring first (build failing? compare validpgpkeys on the AUR page).
-# A stale pubring lock from an interrupted gpg run would hang the import.
-rm -f /home/$NEW_USER/.gnupg/public-keys.d/pubring.db.lock
-sudo -u "$NEW_USER" -H bash -c 'curl -sS https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.gpg | gpg --import -' \
+# ~/.gnupg is made first so gpg keeps a plain pubring.kbx: a homedir gpg
+# creates itself uses the keyboxd daemon, whose lock (stamped with the live
+# ISO's hostname) is never released on the installed system and hangs every
+# later gpg call, the build's signature check included.
+GNUPG_DIR=/home/$NEW_USER/.gnupg
+sudo -u "$NEW_USER" install -d -m 700 "\$GNUPG_DIR"
+sed -i '/^use-keyboxd/d' "\$GNUPG_DIR/common.conf" 2>/dev/null || true
+rm -f "\$GNUPG_DIR"/public-keys.d/*.lock
+sudo -u "$NEW_USER" -H bash -c 'curl -fsSL https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.gpg | gpg --import -' \
     || echo "WARNING: could not import the Spotify signing key, the spotify build will fail"
 aur_install spotify spotify-adblock-git
+# No gpg daemon or lock may outlive the chroot.
+sudo -u "$NEW_USER" -H gpgconf --kill all 2>/dev/null || true
+rm -f "\$GNUPG_DIR"/*.lock "\$GNUPG_DIR"/public-keys.d/*.lock
 
 # One launcher entry with the adblocker preloaded (/usr/local/share outranks
 # /usr/share); the package's own "Spotify (adblock)" entry is hidden.

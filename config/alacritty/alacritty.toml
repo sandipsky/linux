@@ -94,3 +94,8 @@ x = 24
 y = 10
 
 [terminal]
+
+[[keyboard.bindings]]
+key = "Return"
+mods = "Shift"
+chars = "\u001B\r"

@@ -10,12 +10,12 @@ local browser     = "google-chrome-stable"
 local filemanager = "nautilus"
 local calculator  = "gnome-calculator"
 
--- Noctalia: every shell action is an IPC command on the running instance
+-- Shelly: every shell action is an IPC command on the running instance
 -- (docs.noctalia.dev, "Keybinds & IPC").
 local function shell(args)
-    return hl.dsp.exec_cmd("noctalia msg " .. args)
+    return hl.dsp.exec_cmd("shelly msg " .. args)
 end
--- volume / brightness through Noctalia too (default 5% steps, 100% ceiling),
+-- volume / brightness through Shelly too (default 5% steps, 100% ceiling),
 -- so its OSD shows every change.
 local volume_up       = shell("volume-up")
 local volume_down     = shell("volume-down")

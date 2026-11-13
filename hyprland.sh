@@ -25,6 +25,14 @@ if [[ ! -d "$REPO_DIR/config/hypr" || ! -f "$REPO_DIR/icons/folder/index.theme" 
     exit 1
 fi
 
+# The prebuilt Shelly release, written by ./package.sh in the shelly repo.
+SHELLY_TARBALLS=("$REPO_DIR"/shelly-*.tar.gz)
+if [[ ${#SHELLY_TARBALLS[@]} -ne 1 || ! -f "${SHELLY_TARBALLS[0]}" ]]; then
+    echo "Expected exactly one shelly-*.tar.gz next to the script ($REPO_DIR). Build it in the shelly repo with: ./package.sh --output $REPO_DIR"
+    exit 1
+fi
+SHELLY_TARBALL="${SHELLY_TARBALLS[0]}"
+
 # ============================================================
 # PROMPTS
 # ============================================================
@@ -44,9 +52,8 @@ trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
 # ============================================================
 # qt5-wayland and qt6-wayland let Qt apps honour QT_QPA_PLATFORM=wayland from
 # config/uwsm/env; qt6-5compat carries the Qt 5 leftovers (GraphicalEffects)
-# that older QML, SDDM themes included, imports. noctalia is the bar,
-# launcher, lock screen, notifications, clipboard, idle, night light and
-# wallpaper in one; upower is for its battery widget.
+# that older QML, SDDM themes included, imports. upower is for the battery
+# widget of Shelly, which the SHELLY step below installs.
 sudo pacman -S --noconfirm --needed \
     hyprland \
     hyprpicker \
@@ -55,7 +62,6 @@ sudo pacman -S --noconfirm --needed \
     qt6-wayland \
     qt6-5compat \
     uwsm \
-    noctalia \
     upower \
     wl-clipboard \
     grim \
@@ -77,6 +83,20 @@ sudo pacman -S --noconfirm --needed \
     fastfetch
 
 # ============================================================
+# SHELLY
+# ============================================================
+# The bar, launcher, lock screen, notifications, clipboard, idle, night light
+# and wallpaper in one. It is in no package repository: the tarball next to
+# this script carries a prebuilt release and its own install.sh, which
+# installs the libraries the binary links against with pacman (--noconfirm
+# keeps that unattended), refuses to go on if one of them is missing, and
+# copies the release into /usr/local.
+SHELLY_DIR=$(mktemp -d)
+tar -xzf "$SHELLY_TARBALL" -C "$SHELLY_DIR" --strip-components=1
+"$SHELLY_DIR/install.sh" --noconfirm
+rm -rf "${SHELLY_DIR:?}"
+
+# ============================================================
 # CLAUDE CODE
 # ============================================================
 # Best effort. stdin from /dev/null: the installer is written for `curl | bash`
@@ -93,8 +113,8 @@ rm -f "$CLAUDE_INSTALLER"
 # ============================================================
 # CONFIG (config/ -> ~/.config)
 # ============================================================
-# Noctalia's config.toml holds only the overrides; what is changed in its
-# Settings window lands in ~/.local/state/noctalia/settings.toml on top.
+# Shelly's config.toml holds only the overrides; what is changed in its
+# Settings window lands in ~/.local/state/shelly/settings.toml on top.
 mkdir -p "$HOME/.config"
 cp -r "$REPO_DIR"/config/* "$HOME/.config/"
 
@@ -271,7 +291,7 @@ xdg-mime default org.gnome.TextEditor.desktop application/x-shellscript
 # LibreOffice Draw would otherwise grab application/pdf.
 xdg-mime default org.gnome.Evince.desktop application/pdf
 
-# ~/.face is Noctalia's avatar_path and what the SDDM greeter shows.
+# ~/.face is Shelly's avatar_path and what the SDDM greeter shows.
 if [[ -f "$REPO_DIR/profile.png" ]]; then
     cp "$REPO_DIR/profile.png" "$HOME/.face"
 fi

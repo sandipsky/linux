@@ -1,11 +1,11 @@
-# Noctalia v5: only the settings that differ from its defaults. Everything
-# else comes from the built-in defaults (reference: example.toml in the
-# noctalia repo, or `noctalia msg config-get <path>`), and whatever is changed
-# in the Settings window (Super+S) is saved to
-# ~/.local/state/noctalia/settings.toml on top of this file.
+# Shelly (a fork of Noctalia v5): only the settings that differ from its
+# defaults. Everything else comes from the built-in defaults (reference:
+# example.toml in the shelly repo, or `shelly msg config-get <path>`), and
+# whatever is changed in the Settings window (Super+S) is saved to
+# ~/.local/state/shelly/settings.toml on top of this file.
 #
 # Started by hypr/conf/autostart.lua, driven from hypr/conf/keybinds.lua with
-# `noctalia msg ...`. Layer rules for its surfaces (no Hyprland layer
+# `shelly msg ...`. Layer rules for its surfaces (no Hyprland layer
 # animation, blur) are in hypr/conf/windowrules.lua.
 
 [shell]
@@ -16,7 +16,7 @@ font_family  = "Fira Sans"
 # hyprland.sh copies profile.png from the repo to ~/.face, the same picture
 # the SDDM greeter shows.
 avatar_path  = "~/.face"
-# Noctalia's own polkit agent (auth prompts for Nautilus admin://, package
+# Shelly's own polkit agent (auth prompts for Nautilus admin://, package
 # installs from GUI tools, ...): no polkit-gnome in autostart.lua.
 polkit_agent = true
 
@@ -24,8 +24,8 @@ polkit_agent = true
 directory = "~/Pictures/Wallpapers"
 
 # Lock after 10 minutes idle, screens off a minute later (the previous shell's
-# timeouts); the lock screen itself needs nothing else, Noctalia implements
-# ext-session-lock. Super+L and the lid switch lock through `noctalia msg
+# timeouts); the lock screen itself needs nothing else, Shelly implements
+# ext-session-lock. Super+L and the lid switch lock through `shelly msg
 # session lock` / `session lock-and-suspend`.
 [idle.behavior.lock]
 timeout = 600
@@ -38,7 +38,7 @@ action  = "screen_off"
 enabled = true
 
 # Scheduled night light (sunset to sunrise from [location]); the bar widget
-# and `noctalia msg nightlight-toggle` switch it at runtime.
+# and `shelly msg nightlight-toggle` switch it at runtime.
 [nightlight]
 enabled           = true
 temperature_night = 4800

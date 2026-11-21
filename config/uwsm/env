@@ -6,7 +6,7 @@
 # Hyprland's own `env` (hl.env in config/hypr/conf/environment.lua) only
 # applies to processes Hyprland forks directly, so anything launched through
 # systemd (`uwsm app`, transient scopes), D-Bus activation, xdg-desktop-portal
-# or a restarted Noctalia never saw them. Compositor-only variables stay in
+# or a restarted Shelly never saw them. Compositor-only variables stay in
 # environment.lua; app-facing ones belong here.
 
 # Hybrid Intel + NVIDIA: Hyprland drives only the iGPU, so it never holds the

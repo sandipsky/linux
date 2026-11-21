@@ -10,17 +10,17 @@ local browser     = "google-chrome-stable"
 local filemanager = "nautilus"
 local calculator  = "gnome-calculator"
 
--- Noctalia: every shell action is an IPC command on the running instance
--- (docs.noctalia.dev, "Keybinds & IPC").
+-- Shelly: shell actions are IPC commands on the running instance
+-- (`shelly msg ...`, see Shelly's README, "Key bindings").
 local function shell(args)
-    return hl.dsp.exec_cmd("noctalia msg " .. args)
+    return hl.dsp.exec_cmd("shelly msg " .. args)
 end
--- volume / brightness through Noctalia too (default 5% steps, 100% ceiling),
--- so its OSD shows every change.
-local volume_up       = shell("volume-up")
-local volume_down     = shell("volume-down")
-local brightness_up   = shell("brightness-up")
-local brightness_down = shell("brightness-down")
+-- Volume and brightness go through wpctl and brightnessctl (5% steps, 100%
+-- ceiling); Shelly's OSD shows every change whoever made it.
+local volume_up       = hl.dsp.exec_cmd("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+")
+local volume_down     = hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")
+local brightness_up   = hl.dsp.exec_cmd("brightnessctl set 5%+")
+local brightness_down = hl.dsp.exec_cmd("brightnessctl set 5%-")
 
 -- -----------------------------------------------------
 -- Key bindings
@@ -33,7 +33,6 @@ hl.bind(mainMod .. " + G", hl.dsp.exec_cmd("lutris"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(filemanager .. " --new-window"))
 hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd(filemanager .. " admin://"))
 hl.bind(mainMod .. " + C", hl.dsp.exec_cmd(calculator))
-hl.bind(mainMod .. " + P", shell("wallpaper-next"))
 hl.bind(mainMod .. " + SHIFT + C", hl.dsp.exec_cmd("hyprpicker -a"))
 
 -- Windows
@@ -94,17 +93,17 @@ hl.bind(mainMod .. " + SHIFT + mouse_up",   hl.dsp.window.move({ workspace = "r+
 -- Actions
 -- -----------------------------------------------------
 
-hl.bind("ALT + space", shell("panel-toggle launcher"))
-hl.bind(mainMod .. " + V", shell("panel-toggle clipboard"))
-hl.bind(mainMod .. " + A", shell("panel-toggle control-center"))
-hl.bind(mainMod .. " + X", shell("panel-toggle session"))
-hl.bind(mainMod .. " + L", shell("session lock"))
+hl.bind("ALT + space", shell("launcher toggle"))
+hl.bind(mainMod .. " + V", shell("clipboard toggle"))
+hl.bind(mainMod .. " + X", shell("session toggle"))
+hl.bind(mainMod .. " + L", shell("lock"))
 
 hl.bind(mainMod .. " + SHIFT + N", hl.dsp.exec_cmd("hyprctl reload"))
-hl.bind(mainMod .. " + SHIFT + W", shell("panel-toggle wallpaper"))
-hl.bind(mainMod .. " + S", shell("settings-toggle"))
+hl.bind(mainMod .. " + SHIFT + W", shell("wallpaper toggle"))
+hl.bind(mainMod .. " + S", shell("settings"))
 
-hl.bind("switch:Lid Switch", shell("session lock-and-suspend"), { locked = true })
+-- Shelly locks before the machine sleeps (lockscreen.lock_before_suspend).
+hl.bind("switch:Lid Switch", hl.dsp.exec_cmd("systemctl suspend"), { locked = true })
 
 hl.bind(mainMod .. " + I", brightness_down)
 hl.bind(mainMod .. " + O", brightness_up)
@@ -120,7 +119,7 @@ hl.bind("XF86MonBrightnessUp",   brightness_up)
 hl.bind("XF86MonBrightnessDown", brightness_down)
 hl.bind("XF86AudioRaiseVolume",  volume_up)
 hl.bind("XF86AudioLowerVolume",  volume_down)
-hl.bind("XF86AudioMute",         shell("volume-mute"))
-hl.bind("XF86AudioMicMute",      shell("mic-mute"))
-hl.bind("XF86ScreenSaver",       shell("session lock"))
+hl.bind("XF86AudioMute",         hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"))
+hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"))
+hl.bind("XF86ScreenSaver",       shell("lock"))
 hl.bind("Print",                 hl.dsp.exec_cmd("grim - | wl-copy"))

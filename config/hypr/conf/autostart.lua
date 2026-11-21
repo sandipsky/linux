@@ -3,10 +3,10 @@
 -- -----------------------------------------------------
 
 hl.on("hyprland.start", function()
-    -- Noctalia: bar, launcher, notifications, clipboard, lock/idle, night
-    -- light, wallpaper, OSDs and (polkit_agent = true in its config.toml)
-    -- the polkit authentication agent. Started the way its Hyprland docs
-    -- show; `noctalia --daemon` is only for compositors that wait for the
-    -- startup command to return.
-    hl.exec_cmd("noctalia")
+    -- Shelly: bar, launcher, notifications, clipboard, lock/idle, night
+    -- light, wallpaper and OSDs. It is not a polkit agent.
+    hl.exec_cmd("shelly")
+    -- Polkit agent: the password prompts of Nautilus admin://, GUI package
+    -- tools and the like.
+    hl.exec_cmd("/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1")
 end)

@@ -1,0 +1,55 @@
+[bar]
+end = [ 'weather', 'cpu', 'ram', 'notifications', 'clipboard', 'bluetooth', 'battery', 'network', 'audio', 'session' ]
+font_size = 14
+font_weight = 400
+start = [ 'launcher', 'wallpaper', 'workspaces', 'active_window' ]
+
+[launcher]
+display = 'list'
+
+[location]
+latitude = 27.1251
+longitude = 86.0548
+name = 'Nepale, Bagmati Province, Nepal'
+
+[lockscreen]
+transition = [ 'disc', 'stripes', 'zoom', 'honeycomb', 'vortex', 'pixel', 'diamond', 'golden', 'melt', 'crt' ]
+
+[nightlight]
+enabled = true
+force = true
+temperature_day = 6063
+temperature_night = 5525
+
+[osd]
+position = 'bottom_center'
+
+[wallpaper]
+directory = '~/Pictures/Wallpapers'
+
+    [wallpaper.automation]
+    enabled = true
+    interval_seconds = 1200
+
+[widget.active_window]
+empty_text = 'Desktop'
+text = 'app_name'
+
+[widget.clock]
+format = '{:%B %d %I:%M %p}'
+
+[widget.cpu]
+visible = true
+
+[widget.launcher]
+display = 'both'
+
+[widget.ram]
+visible = true
+
+[widget.weather]
+visible = true
+
+[widget.workspaces]
+show_labels = false
+style = 'minimal'

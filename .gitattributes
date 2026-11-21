@@ -2,3 +2,5 @@
 # units, XML): keep every text file LF in the index and on checkout, so a
 # Windows checkout never turns them into CRLF.
 * text=auto eol=lf
+# Never a text file, whatever its first bytes look like.
+*.tar.gz binary

@@ -49,6 +49,8 @@ hl.config({
     misc = {
         disable_hyprland_logo    = true,
         disable_splash_rendering = true,
+        -- Lets a restarted Shelly take over a lock the old one left behind.
+        allow_session_lock_restore = true,
     },
 
     binds = {

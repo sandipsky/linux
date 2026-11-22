@@ -57,6 +57,16 @@ hl.config({
         allow_workspace_cycles = true,
     },
 
+    -- Groups: windows stacked in one tile with a tab bar (see keybinds.lua)
+    group = {
+        groupbar = {
+            height        = 18,
+            font_size     = 10,
+            render_titles = true,
+            gradients     = false,
+        },
+    },
+
     ecosystem = {
         no_update_news = true, -- never show the "Hyprland updated to X" popup
         no_donation_nag = true,

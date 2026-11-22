@@ -58,6 +58,14 @@ hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 hl.bind(mainMod .. " + SHIFT + up",   hl.dsp.window.resize({ x = 100,  y = 0, relative = true }))
 hl.bind(mainMod .. " + SHIFT + down", hl.dsp.window.resize({ x = -100, y = 0, relative = true }))
 
+-- Groups (tabs): stack windows in one tile with a tab bar
+hl.bind(mainMod .. " + T",      hl.dsp.group.toggle())
+hl.bind(mainMod .. " + period", hl.dsp.group.next())
+hl.bind(mainMod .. " + comma",  hl.dsp.group.prev())
+hl.bind(mainMod .. " + CTRL + ALT + left",  hl.dsp.window.move({ into_group = "left" }))
+hl.bind(mainMod .. " + CTRL + ALT + right", hl.dsp.window.move({ into_group = "right" }))
+hl.bind(mainMod .. " + CTRL + ALT + down",  hl.dsp.window.move({ out_of_group = true }))
+
 -- -----------------------------------------------------
 -- Workspaces
 -- -----------------------------------------------------

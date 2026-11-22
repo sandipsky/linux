@@ -1,0 +1,7 @@
+Shelly SDDM theme. MIT licence.
+
+fonts/tabler.ttf    Tabler Icons (https://tabler.io/icons), MIT licence,
+                    Copyright (c) 2020-2025 Paweł Kuna.
+shaders/blur.frag   The backdrop blur of Shelly, ported from Noctalia v5.5.0,
+                    MIT licence, Copyright (c) 2026 noctalia-dev.
+background.jpg      A copy of the wallpaper in use when the theme was made; replace it freely.

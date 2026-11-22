@@ -20,8 +20,8 @@ USERNAME=$(id -un)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPS_DIR="$HOME/.local/share/applications"
 
-if [[ ! -d "$REPO_DIR/config/hypr" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" || ! -f "$REPO_DIR/nautilus/folder-preview" ]]; then
-    echo "config/, icons/, fonts/ and nautilus/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
+if [[ ! -d "$REPO_DIR/config/hypr" || ! -f "$REPO_DIR/icons/folder/index.theme" || ! -d "$REPO_DIR/fonts/microsoft" || ! -f "$REPO_DIR/nautilus/folder-preview" || ! -f "$REPO_DIR/sddm/shelly/Main.qml" ]]; then
+    echo "config/, icons/, fonts/, nautilus/ and sddm/ not found next to the script ($REPO_DIR). Run it from a full clone of the repo."
     exit 1
 fi
 
@@ -374,10 +374,26 @@ EOF
         SDDM_X11_ARGS="-nolisten tcp"
     fi
 
+    # The greeter theme (sddm/shelly): the Sign-in step of Shelly's lock screen,
+    # with a session menu at the bottom right when there is more than one
+    # session. Qt 6 QML (QtQuick.Effects, from qt6-declarative, which sddm pulls
+    # in); it carries its own icon font and wallpaper and uses Fira Sans from
+    # archlinux.sh. Its sizes are in screen pixels; for a scaled monitor set
+    # scale= in its theme.conf.
+    SDDM_THEME_DIR=/usr/share/sddm/themes/shelly
+    sudo mkdir -p "$(dirname "$SDDM_THEME_DIR")"
+    sudo rm -rf "$SDDM_THEME_DIR"
+    sudo cp -r "$REPO_DIR/sddm/shelly" "$SDDM_THEME_DIR"
+    sudo chown -R root:root "$SDDM_THEME_DIR"
+    sudo chmod -R u=rwX,go=rX "$SDDM_THEME_DIR"
+
     # Drop-ins in /etc/sddm.conf.d are read in name order, so zz- keeps this on
-    # top. No [Theme] section: SDDM's default greeter.
+    # top.
     sudo mkdir -p /etc/sddm.conf.d
     sudo tee /etc/sddm.conf.d/zz-hyprland.conf >/dev/null <<EOF
+[Theme]
+Current=shelly
+
 [X11]
 ServerArguments=$SDDM_X11_ARGS
 EOF

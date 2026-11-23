@@ -5,6 +5,9 @@
 # Usage:  ./install-craft-apps.sh            # asks which apps
 #         ./install-craft-apps.sh 1,3-5      # or: 1-2 | 2 | all
 #
+# - Nothing is asked after the selection. If something has to be installed,
+#   sudo asks for the password once, right away; from then on yay runs with
+#   --noconfirm and a keepalive stops sudo from asking again.
 # - An app that is already installed is not reinstalled; only its launcher
 #   entry is updated.
 # - The launcher entry is written to ~/.local/share/applications, which
@@ -132,6 +135,25 @@ else
   done
 fi
 
+# ---- sudo -------------------------------------------------------------------
+# Only when a chosen app still has to be installed. One prompt up front; the
+# keepalive outlasts sudo's 15-minute timeout, so yay never stops to ask.
+need_install=0
+for ((i = 0; i < N; i++)); do
+  [[ -n "${CHOSEN[i]:-}" ]] || continue
+  IFS='|' read -r app name icons <<<"${APPS[i]}"
+  [[ -n "$(installed_pkg "$app")" ]] || need_install=1
+done
+if ((need_install)) && command -v yay >/dev/null 2>&1; then
+  if ! sudo -v; then
+    echo "sudo authentication failed; nothing was installed or changed." >&2
+    exit 1
+  fi
+  ( while kill -0 "$$" 2>/dev/null; do sleep 60; sudo -n -v; done ) 2>/dev/null &
+  SUDO_KEEPALIVE=$!
+  trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null' EXIT
+fi
+
 # ---- install + rename -------------------------------------------------------
 ok=() failed=()
 for ((i = 0; i < N; i++)); do
@@ -147,8 +169,11 @@ for ((i = 0; i < N; i++)); do
       failed+=("$app"); continue
     fi
     echo "   installing $app-bin ..."
-    if ! yay -S --needed "$app-bin" || [[ -z "$(installed_pkg "$app")" ]]; then
-      echo "   install of $app-bin failed or was cancelled" >&2
+    # --noconfirm answers every yay and pacman question with its default.
+    # stdin from /dev/null: a question that slips through fails the install
+    # instead of blocking the run.
+    if ! yay -S --noconfirm --needed "$app-bin" </dev/null || [[ -z "$(installed_pkg "$app")" ]]; then
+      echo "   install of $app-bin failed" >&2
       failed+=("$app"); continue
     fi
   fi

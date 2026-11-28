@@ -10,7 +10,7 @@ set -e
 # VM DETECTION
 # ============================================================
 # "none" on bare metal; a VM skips every laptop hardware piece (microcode,
-# firmware, GPU drivers, dkms, power tweaks) and the NTFS/VirtualBox prompts.
+# firmware, GPU drivers, dkms, power tweaks) and the NTFS prompt.
 VIRT=$(systemd-detect-virt --vm 2>/dev/null) || VIRT=none
 if [[ "$VIRT" != none ]]; then
     echo "Running in a $VIRT VM: skipping the laptop hardware pieces."
@@ -39,11 +39,6 @@ read -p "Install the development stack (node, JDK, Angular CLI, Docker, Postman)
 read -p "Install the gaming stack (wine-staging, lutris)? [Y/n]: " INSTALL_GAMING
 read -p "Install LibreOffice (only Writer, Calc, Impress in the launcher)? [Y/n]: " INSTALL_OFFICE
 read -p "Install the Plymouth boot splash (default theme, no distro logo)? [Y/n]: " INSTALL_PLYMOUTH
-if [[ "$VIRT" == none ]]; then
-    read -p "Install VirtualBox (VM host + dkms modules + guest-additions ISO)? [Y/n]: " INSTALL_VBOX
-else
-    INSTALL_VBOX=n
-fi
 
 # ============================================================
 # FILESYSTEM
@@ -661,22 +656,6 @@ else
             *) hide_desktop_entry "\$(basename "\$src")" ;;
         esac
     done
-fi
-
-# ============================================================
-# VIRTUALBOX HOST (optional)
-# ============================================================
-# The host modules come from dkms (Arch dropped the prebuilt package); the
-# dkms hook rebuilds them on kernel upgrades. vboxusers is for USB passthrough.
-if [[ "$INSTALL_VBOX" =~ ^[Nn] ]]; then
-    echo "Skipping VirtualBox."
-else
-    pkg_install virtualbox virtualbox-host-dkms virtualbox-guest-iso
-
-    if getent group vboxusers >/dev/null; then
-        usermod -aG vboxusers "$NEW_USER"
-    fi
-
 fi
 
 # ============================================================

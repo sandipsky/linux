@@ -18,6 +18,9 @@
 # - The icon is the .svg from the repo's icons/ folder, which is copied into
 #   ICON_DIR when it is new or has changed; without one there, whatever
 #   ICON_DIR already has is used. No icon: only the name changes.
+# - An app marked "nvidia" in APPS (Premiere Pro) is started through
+#   prime-run, so it can only render on the NVIDIA GPU. Where prime-run is
+#   not installed its Exec line is left as it is.
 # - "remove" uninstalls the chosen apps and deletes their launcher entries
 #   from ~/.local/share/applications. The icons in ICON_DIR are kept.
 
@@ -29,9 +32,10 @@ REPO_ICONS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../icons" 2>/dev/null && pwd)" 
 USER_APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 
 # app (binary / base package name) | launcher name | icon file names to try
+# | "nvidia" to start it on the NVIDIA GPU (optional)
 APPS=(
   "photocraft|Photoshop|photoshop"
-  "filmcraft|Premiere Pro|premiere premiere-pro premierepro premiere_pro"
+  "filmcraft|Premiere Pro|premiere premiere-pro premierepro premiere_pro|nvidia"
   "wordcraft|Word|word"
   "gridcraft|Excel|excel"
   "deckcraft|PowerPoint|powerpoint"
@@ -100,10 +104,21 @@ parse_selection() {
   return 0
 }
 
-# Write the renamed launcher entries for app $1 (name $2, icon names $3).
+# Write the renamed launcher entries for app $1 (name $2, icon names $3,
+# "nvidia" in $4 to start it on the NVIDIA GPU).
 update_launcher() {
-  local app="$1" name="$2" icons="$3" pkg icon="" repo src dst found=0
+  local app="$1" name="$2" icons="$3" gpu="${4:-}" pkg icon="" run="" repo src dst found=0
   pkg="$(installed_pkg "$app")"
+  # prime-run makes the NVIDIA GPU the only one the app can render on. It is
+  # the entry that starts it that way, so this holds from the launcher and
+  # for files opened with the app, and no other app is affected.
+  if [[ $gpu == nvidia ]]; then
+    if command -v prime-run >/dev/null 2>&1; then
+      run="prime-run "
+    else
+      echo "   prime-run not found (package nvidia-prime); the app picks its GPU itself" >&2
+    fi
+  fi
   # The repo's icon wins and is copied into ICON_DIR if it is new or changed.
   # Without one, whatever ICON_DIR already has is used.
   if repo="$(find_icon "$REPO_ICONS" "$icons")"; then
@@ -125,12 +140,14 @@ update_launcher() {
     dst="$USER_APPS/$(basename "$src")"
     # Only the main [Desktop Entry] group is changed; action groups keep
     # their own names. Translated Name[xx]= lines are dropped so the new
-    # name shows in every language.
-    awk -v name="$name" -v icon="$icon" '
+    # name shows in every language. Every Exec line gets prime-run, the
+    # ones of the actions too.
+    awk -v name="$name" -v icon="$icon" -v run="$run" '
       /^\[/ { grp = $0 }
       grp == "[Desktop Entry]" && /^Name=/    { print "Name=" name; next }
       grp == "[Desktop Entry]" && /^Name\[/   { next }
       grp == "[Desktop Entry]" && icon != "" && /^Icon=/ { print "Icon=" icon; next }
+      run != "" && /^Exec=/ { sub(/^Exec=/, "Exec=" run) }
       { print }
     ' "$src" >"$dst.tmp" && mv "$dst.tmp" "$dst"
     if [[ -n "$icon" ]]; then
@@ -138,6 +155,7 @@ update_launcher() {
     else
       echo "   launcher: $name, icon unchanged (no ${icons%% *}.svg in icons/ or $ICON_DIR)  ->  $dst"
     fi
+    [[ -z "$run" ]] || echo "   launcher: starts on the NVIDIA GPU (prime-run)"
   done < <(pacman -Qlq "$pkg" 2>/dev/null | grep -E '^/usr/share/applications/[^/]+\.desktop$')
   if ((found == 0)); then
     echo "   no .desktop file found in package $pkg; launcher not changed" >&2
@@ -165,14 +183,14 @@ remove_app() {
   # an entry left behind by an app that was uninstalled by hand goes too.
   while IFS= read -r entry; do
     rm -f "$entry" && echo "   launcher entry removed: $entry"
-  done < <(grep -lE "^Exec=(/usr/bin/)?$app( |\$)" "$USER_APPS"/*.desktop 2>/dev/null)
+  done < <(grep -lE "^Exec=(prime-run )?(/usr/bin/)?$app( |\$)" "$USER_APPS"/*.desktop 2>/dev/null)
   return 0
 }
 
 # ---- menu -------------------------------------------------------------------
 echo "Craft apps:"
 for ((i = 0; i < N; i++)); do
-  IFS='|' read -r app name icons <<<"${APPS[i]}"
+  IFS='|' read -r app name icons gpu <<<"${APPS[i]}"
   if [[ -n "$(installed_pkg "$app")" ]]; then state="installed"; else state="not installed"; fi
   printf "  %d) %-11s -> %-12s [%s]\n" "$((i + 1))" "$app" "$name" "$state"
 done
@@ -202,7 +220,7 @@ fi
 need_sudo=0
 for ((i = 0; i < N; i++)); do
   [[ -n "${CHOSEN[i]:-}" ]] || continue
-  IFS='|' read -r app name icons <<<"${APPS[i]}"
+  IFS='|' read -r app name icons gpu <<<"${APPS[i]}"
   if [[ $MODE == remove ]]; then
     [[ -z "$(installed_pkg "$app")" ]] || need_sudo=1
   elif [[ -z "$(installed_pkg "$app")" ]]; then
@@ -226,7 +244,7 @@ fi
 ok=() failed=()
 for ((i = 0; i < N; i++)); do
   [[ -n "${CHOSEN[i]:-}" ]] || continue
-  IFS='|' read -r app name icons <<<"${APPS[i]}"
+  IFS='|' read -r app name icons gpu <<<"${APPS[i]}"
   echo
   echo "== $app ($name)"
   if [[ $MODE == remove ]]; then
@@ -249,7 +267,7 @@ for ((i = 0; i < N; i++)); do
       failed+=("$app"); continue
     fi
   fi
-  if update_launcher "$app" "$name" "$icons"; then ok+=("$app"); else failed+=("$app"); fi
+  if update_launcher "$app" "$name" "$icons" "$gpu"; then ok+=("$app"); else failed+=("$app"); fi
 done
 
 if command -v update-desktop-database >/dev/null 2>&1 && [[ -d "$USER_APPS" ]]; then

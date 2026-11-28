@@ -27,6 +27,11 @@
 #
 set -euo pipefail
 
+# NOTE for editing: because of "pipefail", never write "command | grep -q".
+# grep -q quits at the first match, the command feeding it is then killed
+# while still writing, and the whole pipe counts as failed even though the
+# text was found. Use "command | grep ... >/dev/null" instead, as below.
+
 ###############################################################################
 # SETTINGS — things the script does not ask about. Edit before running.
 ###############################################################################
@@ -47,7 +52,7 @@ SHARE_TAG="share"
 IMAGES_DIR="/var/lib/libvirt/images"
 
 # Download URL of the virtio driver ISO (only used for Windows 10/11).
-VIRTIO_URL="https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio-win/virtio-win.iso"
+VIRTIO_URL="https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso"
 
 # Keyboard shortcut (optional, the script asks). If you say yes, the script
 # writes a small launcher program to LAUNCHER and appends one line to your
@@ -113,7 +118,7 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 # Run a command with the libvirt group active. Needed because a group you were
 # just added to only applies to your shell after you log out and back in.
 as_libvirt() {
-    if id -nG | grep -qw libvirt; then
+    if id -nG | grep -w libvirt >/dev/null; then
         "$@"
     else
         sg libvirt -c "$(printf '%q ' "$@")"
@@ -180,6 +185,11 @@ EOF
 [ -e /dev/kvm ]      || die "/dev/kvm not found. Enable virtualization (VT-x / AMD-V / SVM) in your BIOS."
 [ -f "$WIN_ISO" ]    || die "Windows ISO not found at: $WIN_ISO"
 
+# After a kernel update pacman removes the running kernel's modules, so the
+# network modules libvirt needs can no longer be loaded until the next boot.
+[ -d "/usr/lib/modules/$(uname -r)" ] \
+    || die "The kernel was updated since the last boot (still running $(uname -r)). Reboot, then run this script again."
+
 # --- Questions --------------------------------------------------------------
 
 HOST_CORES=$(nproc)
@@ -217,7 +227,7 @@ SHORTCUT_PATTERN=$(printf '%s' "$SHORTCUT_KEYS" | sed 's/ *+ */ *[+] */g')
 if [ ! -f "$HYPR_KEYBINDS" ]; then
     echo "(No Hyprland keybinds file at $HYPR_KEYBINDS, skipping the shortcut question.)"
 elif grep -vF "$LAUNCHER" "$HYPR_KEYBINDS" | grep -v '^[[:space:]]*--' \
-        | sed 's/mainMod *\.\. *"/"SUPER/g' | grep -qiE "\"$SHORTCUT_PATTERN\""; then
+        | sed 's/mainMod *\.\. *"/"SUPER/g' | grep -iE "\"$SHORTCUT_PATTERN\"" >/dev/null; then
     echo "($SHORTCUT_KEYS is already used in $HYPR_KEYBINDS, skipping the shortcut question.)"
 else
     read -rp "Add a $SHORTCUT_KEYS shortcut to launch this VM? [y/N]: " ANSWER || die "No input."
@@ -266,13 +276,13 @@ sudo pacman -S --needed --noconfirm "${PACKAGES[@]}"
 say "Enabling libvirtd"
 sudo systemctl enable --now libvirtd
 
-if ! getent group libvirt | grep -qw "$USER"; then
+if ! getent group libvirt | grep -w "$USER" >/dev/null; then
     say "Adding $USER to the libvirt group (takes full effect after you log out and in)"
     sudo usermod -aG libvirt "$USER"
 fi
 
 say "Starting the default NAT network"
-if ! sudo virsh -c "$URI" net-info default | grep -q 'Active: *yes'; then
+if ! sudo virsh -c "$URI" net-info default | grep 'Active: *yes' >/dev/null; then
     sudo virsh -c "$URI" net-start default
 fi
 sudo virsh -c "$URI" net-autostart default

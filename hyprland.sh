@@ -233,19 +233,29 @@ for dest in "$APPS_DIR"/*.desktop; do
 done
 
 # ============================================================
-# ALACRITTY AS "TERMINAL"
+# LAUNCHER ICONS (Terminal, Files, Document Viewer)
 # ============================================================
-# User-level copy (same id, so it outranks the system entry) renamed to
-# Terminal, icon by absolute path so no icon theme can shadow it.
-if [[ -f /usr/share/applications/Alacritty.desktop ]]; then
-    cp /usr/share/applications/Alacritty.desktop "$APPS_DIR/Alacritty.desktop"
-    # Only the first Name=; the "New Terminal" action keeps its own.
-    sed -i -e '0,/^Name=/s/^Name=.*/Name=Terminal/' \
-           -e "s|^Icon=.*|Icon=$ICON_DIR/org.gnome.Terminal.svg|" \
-           "$APPS_DIR/Alacritty.desktop"
-else
-    echo "WARNING: /usr/share/applications/Alacritty.desktop not found — launcher entry left as is"
-fi
+# User-level copies (same id, so they outrank the system entries) with the
+# icon by absolute path: no icon theme can shadow it, and a package update
+# can't bring the stock icon back. Alacritty is also renamed to Terminal.
+# desktop id | icon in icons/ | new name (empty: keep)
+for entry in "Alacritty|terminal.svg|Terminal" \
+             "org.gnome.Nautilus|files.svg|" \
+             "org.gnome.Evince|evince.svg|"; do
+    IFS='|' read -r id icon name <<< "$entry"
+    src="/usr/share/applications/$id.desktop"
+    dest="$APPS_DIR/$id.desktop"
+    if [[ ! -f "$src" ]]; then
+        echo "WARNING: $src not found — launcher entry left as is"
+        continue
+    fi
+    cp "$src" "$dest"
+    sed -i "s|^Icon=.*|Icon=$ICON_DIR/$icon|" "$dest"
+    # Only the first Name=; the actions ("New Terminal") keep their own.
+    if [[ -n "$name" ]]; then
+        sed -i "0,/^Name=/s/^Name=.*/Name=$name/" "$dest"
+    fi
+done
 
 update-desktop-database "$APPS_DIR" 2>/dev/null || true
 

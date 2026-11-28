@@ -3,7 +3,8 @@
 # Installs Android Studio (bundles Kotlin, Gradle and a JDK), udev rules for
 # real devices, and adds the SDK tools to PATH in ~/.zshrc.
 #
-# Usage: ./setup-android-dev.sh
+# Usage: ./setup-android-dev.sh           set up
+#        ./setup-android-dev.sh remove    undo it again (see remove below)
 # Unattended: asks for the sudo password once at the start (not at all if sudo
 # is passwordless or already cached), then runs to completion with no prompts.
 # Safe to re-run: every step is skipped if already done.
@@ -11,17 +12,100 @@
 set -euo pipefail
 
 SDK_DIR="$HOME/Android/Sdk"
+AVD_DIR="$HOME/.android/avd"
 ZSHRC="$HOME/.zshrc"
 MARKER="# >>> android sdk >>>"
+MARKER_END="# <<< android sdk <<<"
 
 info() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# --- remove ("./setup-android-dev.sh remove") --------------------------------
+
+# Undoes the setup: Android Studio, the udev rules and the PATH lines in
+# ~/.zshrc. The SDK and the emulator devices were downloaded by Android
+# Studio, not by this script, and can be many GB: it asks once, at the start,
+# whether they go too (without a terminal to ask on they are kept).
+# Always kept: your projects, Android Studio's settings (~/.config/Google,
+# ~/.local/share/Google, ~/.cache/Google), the adb keys and debug keystore in
+# ~/.android, and ~/.gradle.
+remove() {
+    local -a installed data=()
+    local answer=n tmp
+
+    if [[ -d $SDK_DIR ]]; then data+=("$SDK_DIR"); fi
+    if [[ -d $AVD_DIR ]]; then data+=("$AVD_DIR"); fi
+    if (( ${#data[@]} )) && [[ -t 0 ]]; then
+        info "The Android SDK and the emulator devices"
+        du -sh "${data[@]}" 2>/dev/null || true
+        read -rp "Delete them too? [y/N]: " answer || answer=n
+    fi
+
+    info "Uninstalling Android Studio and the udev rules"
+    mapfile -t installed < <(pacman -Qq android-studio android-udev 2>/dev/null)
+    if (( ${#installed[@]} )); then
+        # -s also removes their dependencies that nothing else uses, -n their
+        # config files.
+        sudo pacman -Rns --noconfirm "${installed[@]}"
+    else
+        echo "Not installed, skipping."
+    fi
+
+    info "Removing the Android SDK tools from PATH in $ZSHRC"
+    if [[ ! -f $ZSHRC ]] || ! grep -qxF "$MARKER" "$ZSHRC"; then
+        echo "Not there, skipping."
+    elif ! grep -qxF "$MARKER_END" "$ZSHRC"; then
+        warn "found the line '$MARKER' but not '$MARKER_END' - remove the block by hand"
+    else
+        # Drops everything from one marker line to the other, and the empty
+        # line the setup put above the block. Written to a temporary file
+        # first, so a failure cannot leave ~/.zshrc half written.
+        tmp=$(mktemp)
+        awk -v start="$MARKER" -v end="$MARKER_END" '
+            skipping    { if ($0 == end) skipping = 0; next }
+            $0 == start { blank = 0; skipping = 1; next }
+            blank       { print ""; blank = 0 }
+            /^$/        { blank = 1; next }
+                        { print }
+            END         { if (blank) print "" }
+        ' "$ZSHRC" > "$tmp"
+        cat "$tmp" > "$ZSHRC"
+        rm -f "$tmp"
+        echo "Removed. Open a new terminal for it to take effect."
+    fi
+
+    if (( ${#data[@]} )); then
+        info "The Android SDK and the emulator devices"
+        case "$answer" in
+            y|Y|yes|Yes)
+                rm -rf -- "${data[@]}"
+                # ~/Android itself, if the SDK was the only thing in it.
+                rmdir "$(dirname "$SDK_DIR")" 2>/dev/null || true
+                echo "Deleted: ${data[*]}" ;;
+            *)
+                echo "Kept: ${data[*]}" ;;
+        esac
+    fi
+
+    info "Done"
+    cat <<'EOF'
+Kept: your projects, Android Studio's settings (~/.config/Google,
+~/.local/share/Google, ~/.cache/Google), ~/.android and ~/.gradle.
+EOF
+}
+
 # --- preflight ---------------------------------------------------------------
 
 [[ $EUID -ne 0 ]] || die "run this as your normal user, not root (yay refuses to run as root)"
 command -v pacman >/dev/null || die "pacman not found - this script is for Arch Linux"
+
+case "${1:-}" in
+    "")     ;;
+    remove) remove; exit 0 ;;
+    *)      die "unknown argument '$1' - run without arguments to set up, or with: remove" ;;
+esac
+
 command -v yay >/dev/null    || die "yay not found - install an AUR helper first"
 
 # Get sudo up front, then keep it alive so the long AUR build can't outlast

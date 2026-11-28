@@ -15,6 +15,13 @@
 # run the script again with a different ISO to add another one. It refuses to
 # touch a VM that already exists.
 #
+# REMOVING
+#   Run:  ./setup-windows-vm.sh remove
+#   It asks, one by one, whether to delete each VM this script made (with its
+#   disk), the keyboard shortcut, and KVM itself (the packages). Nothing is
+#   removed until you confirm the summary at the end. The shared folder and
+#   your Windows ISO are always kept.
+#
 # WHAT DIFFERS PER VERSION
 #   Windows 10 / 11 : fast virtio disk + network, and a shared folder
 #                     (~/share shows up as drive Z:). Needs drivers loaded
@@ -112,8 +119,27 @@ set_version() {
 URI="qemu:///system"
 VIRTIO_ISO="$IMAGES_DIR/virtio-win.iso"
 
+# Every VM_NAME from set_version above. Remove mode looks for these.
+SCRIPT_VMS=(win7 win81 win10 win11)
+
+# The packages the script installs (swtpm only for Windows 11). Remove mode
+# uninstalls the same list.
+KVM_PACKAGES=(qemu-desktop libvirt virt-install virt-viewer dnsmasq edk2-ovmf virtiofsd)
+TPM_PACKAGES=(swtpm)
+
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+
+# ask_yes_no "question" y|n  -> succeeds on yes. Enter picks the given default.
+ask_yes_no() {
+    local prompt=$1 def=$2 hint="[y/N]" answer
+    [ "$def" = y ] && hint="[Y/n]"
+    read -rp "$prompt $hint: " answer || die "No input."
+    case "${answer:-$def}" in
+        y|Y|yes|Yes) return 0 ;;
+        *)           return 1 ;;
+    esac
+}
 
 # Run a command with the libvirt group active. Needed because a group you were
 # just added to only applies to your shell after you log out and back in.
@@ -179,9 +205,229 @@ EOF
     hyprctl reload >/dev/null 2>&1 || true
 }
 
+# --- Remove mode ("./setup-windows-vm.sh remove") ----------------------------
+
+# Succeeds if VM $1 is switched on (running or paused).
+vm_is_active() {
+    sudo virsh -c "$URI" list --name | grep -Fx "$1" >/dev/null
+}
+
+# Prints the files that belong to VM $1 alone, one per line: its disk image(s)
+# and its copy of the Windows ISO. The virtio driver CD is shared between VMs,
+# so it is not listed.
+vm_files() {
+    sudo virsh -c "$URI" domblklist "$1" --details \
+        | awk '$1 == "file" && $2 == "disk" && $4 != "-" {
+                   sub(/^ *[^ ]+ +[^ ]+ +[^ ]+ +/, ""); print }'
+    if sudo test -e "$IMAGES_DIR/$1-install.iso"; then
+        echo "$IMAGES_DIR/$1-install.iso"
+    fi
+}
+
+# Switch VM $1 off, delete its definition and the files from vm_files.
+delete_vm() {
+    local name=$1 file
+    local -a files
+    say "Deleting VM $name"
+    mapfile -t files < <(vm_files "$name")
+
+    if vm_is_active "$name"; then
+        echo "    It is running: switching it off"
+        sudo virsh -c "$URI" destroy "$name" >/dev/null
+    fi
+
+    # --nvram deletes the UEFI settings file. The other flags drop a saved
+    # state and snapshot records; libvirt refuses to delete a VM that still
+    # has them.
+    sudo virsh -c "$URI" undefine "$name" --nvram --managed-save \
+        --snapshots-metadata --checkpoints-metadata >/dev/null
+
+    # Through libvirt where it tracks the file (so its list stays correct),
+    # plainly otherwise.
+    for file in "${files[@]}"; do
+        sudo virsh -c "$URI" vol-delete "$file" >/dev/null 2>&1 || sudo rm -f -- "$file"
+        echo "    Deleted $file"
+    done
+}
+
+# Delete the launcher and take its lines back out of the Hyprland keybinds:
+# the bind line, plus the comment and the blank line add_shortcut put above it.
+remove_shortcut() {
+    say "Removing the keyboard shortcut"
+    rm -f "$LAUNCHER"
+    echo "    Deleted $LAUNCHER"
+
+    if [ -f "$HYPR_KEYBINDS" ] && grep -qF "$LAUNCHER" "$HYPR_KEYBINDS"; then
+        cp "$HYPR_KEYBINDS" "$HYPR_KEYBINDS.bak"
+        awk -v launcher="$LAUNCHER" '
+            function flush(   i) { for (i = 1; i <= held; i++) print line[i]; held = 0 }
+            index($0, launcher) {
+                if (held && line[held] !~ /^-- Windows VM \(added by /) flush()
+                held = 0
+                next
+            }
+            /^[[:space:]]*$/ { flush(); line[++held] = $0; next }
+            /^-- Windows VM \(added by / {
+                if (!(held == 1 && line[1] ~ /^[[:space:]]*$/)) flush()
+                line[++held] = $0
+                next
+            }
+            { flush(); print }
+            END { flush() }
+        ' "$HYPR_KEYBINDS.bak" > "$HYPR_KEYBINDS"
+        echo "    Keybind removed from: $HYPR_KEYBINDS  (backup: $HYPR_KEYBINDS.bak)"
+        hyprctl reload >/dev/null 2>&1 || true
+    fi
+}
+
+# Undo steps 1 and 2 of the setup: the packages, the service, the network and
+# the group membership. Also deletes the downloaded virtio driver ISO.
+remove_kvm() {
+    local -a installed
+    say "Uninstalling KVM"
+
+    # pacman does not stop anything, so the network (the virbr0 bridge and its
+    # dnsmasq) and the services are stopped before their files go.
+    if command -v virsh >/dev/null; then
+        sudo virsh -c "$URI" net-destroy default >/dev/null 2>&1 || true
+        sudo virsh -c "$URI" net-autostart --disable default >/dev/null 2>&1 || true
+    fi
+    sudo systemctl disable --now libvirtd.service >/dev/null 2>&1 || true
+    sudo systemctl stop 'libvirtd*' 'virtlogd*' 'virtlockd*' >/dev/null 2>&1 || true
+
+    # -s also removes their dependencies that nothing else uses, -n their
+    # config files. -u leaves out a package that something else still needs,
+    # instead of failing.
+    mapfile -t installed < <(pacman -Qq "${KVM_PACKAGES[@]}" "${TPM_PACKAGES[@]}" 2>/dev/null)
+    if [ ${#installed[@]} -gt 0 ]; then
+        sudo pacman -Rnsu --noconfirm "${installed[@]}" \
+            || echo "    pacman did not remove everything, see its messages above."
+    fi
+
+    sudo rm -f -- "$VIRTIO_ISO" "$VIRTIO_ISO.part"
+
+    if getent group libvirt | grep -w "$USER" >/dev/null; then
+        sudo gpasswd -d "$USER" libvirt >/dev/null
+        echo "    $USER left the libvirt group."
+    fi
+}
+
+remove_mode() {
+    local name state file shortcut_vm def all_vms=""
+    local -a found=() chosen=() remaining=() installed=()
+    local want_shortcut=no want_kvm=no
+
+    # --- Questions ---
+
+    if command -v virsh >/dev/null; then
+        # VMs can only be listed while libvirtd runs.
+        sudo virsh -c "$URI" uri >/dev/null 2>&1 || sudo systemctl start libvirtd \
+            || die "libvirtd does not start, so the VMs cannot be listed."
+        all_vms=$(sudo virsh -c "$URI" list --all --name)
+        for name in "${SCRIPT_VMS[@]}"; do
+            if grep -Fx "$name" <<<"$all_vms" >/dev/null; then
+                found+=("$name")
+            fi
+        done
+    fi
+
+    echo
+    if [ ${#found[@]} -eq 0 ]; then
+        echo "No VM made by this script exists (looked for: ${SCRIPT_VMS[*]})."
+    fi
+    for name in "${found[@]}"; do
+        state=off
+        if vm_is_active "$name"; then state=running; fi
+        if ask_yes_no "Delete VM '$name' ($state) and its disk? Everything inside that Windows is lost." n; then
+            chosen+=("$name")
+        fi
+    done
+
+    # Every VM that will still exist afterwards, including ones not made here.
+    while read -r name; do
+        [ -n "$name" ] || continue
+        [[ " ${chosen[*]} " == *" $name "* ]] || remaining+=("$name")
+    done <<<"$all_vms"
+
+    # The shortcut: suggested for removal unless the VM it launches stays.
+    if [ -e "$LAUNCHER" ] || { [ -f "$HYPR_KEYBINDS" ] && grep -qF "$LAUNCHER" "$HYPR_KEYBINDS"; }; then
+        shortcut_vm=""
+        if [ -f "$LAUNCHER" ]; then
+            shortcut_vm=$(sed -n 's/^VM="\(.*\)"$/\1/p' "$LAUNCHER")
+        fi
+        def=y
+        if [[ -n $shortcut_vm && " ${remaining[*]} " == *" $shortcut_vm "* ]]; then def=n; fi
+        if ask_yes_no "Remove the keyboard shortcut${shortcut_vm:+ that launches $shortcut_vm}?" "$def"; then
+            want_shortcut=yes
+        fi
+    fi
+
+    # KVM itself: only offered when no VM at all is left that needs it.
+    mapfile -t installed < <(pacman -Qq "${KVM_PACKAGES[@]}" "${TPM_PACKAGES[@]}" 2>/dev/null)
+    if [ ${#installed[@]} -gt 0 ]; then
+        if [ ${#remaining[@]} -gt 0 ]; then
+            echo "(KVM itself is kept, because these VMs remain: ${remaining[*]})"
+        elif ask_yes_no "Also uninstall KVM itself (packages, driver ISO, libvirt group)?" n; then
+            want_kvm=yes
+        fi
+    fi
+
+    if [ ${#chosen[@]} -eq 0 ] && [ "$want_shortcut" = no ] && [ "$want_kvm" = no ]; then
+        echo
+        echo "Nothing selected. Nothing was changed."
+        return 0
+    fi
+
+    # --- Summary ---
+
+    echo
+    echo "About to remove:"
+    for name in "${chosen[@]}"; do
+        echo "    VM            $name"
+        while read -r file; do
+            echo "                  $file"
+        done < <(vm_files "$name")
+    done
+    if [ "$want_shortcut" = yes ]; then
+        echo "    Shortcut      $LAUNCHER"
+        echo "                  and its lines in $HYPR_KEYBINDS"
+    fi
+    if [ "$want_kvm" = yes ]; then
+        echo "    Packages      ${installed[*]}"
+        echo "                  and their dependencies that nothing else uses"
+        echo "    Driver ISO    $VIRTIO_ISO"
+        echo "    Group         $USER leaves the libvirt group"
+    fi
+    echo
+    echo "Kept: $SHARE_DIR and $WIN_ISO"
+    echo
+    if ! ask_yes_no "Continue?" n; then
+        echo "Cancelled. Nothing was changed."
+        return 0
+    fi
+
+    # --- Removal ---
+
+    for name in "${chosen[@]}"; do
+        delete_vm "$name"
+    done
+    if [ "$want_shortcut" = yes ]; then remove_shortcut; fi
+    if [ "$want_kvm" = yes ]; then remove_kvm; fi
+
+    say "Done."
+}
+
 # --- Checks -----------------------------------------------------------------
 
 [ "$(id -u)" -ne 0 ] || die "Run this as your normal user, not as root or with sudo."
+
+# With "remove" as the argument the script removes instead of creating.
+case "${1:-}" in
+    "")     ;;
+    remove) remove_mode; exit 0 ;;
+    *)      die "Unknown argument '$1'. Run without arguments to create a VM, or with: remove" ;;
+esac
+
 [ -e /dev/kvm ]      || die "/dev/kvm not found. Enable virtualization (VT-x / AMD-V / SVM) in your BIOS."
 [ -f "$WIN_ISO" ]    || die "Windows ISO not found at: $WIN_ISO"
 
@@ -267,8 +513,8 @@ esac
 # --- 1. Packages ------------------------------------------------------------
 
 say "Installing packages"
-PACKAGES=(qemu-desktop libvirt virt-install virt-viewer dnsmasq edk2-ovmf virtiofsd)
-[ "$USE_TPM" = yes ] && PACKAGES+=(swtpm)
+PACKAGES=("${KVM_PACKAGES[@]}")
+[ "$USE_TPM" = yes ] && PACKAGES+=("${TPM_PACKAGES[@]}")
 sudo pacman -S --needed --noconfirm "${PACKAGES[@]}"
 
 # --- 2. libvirt service, group and network ----------------------------------
@@ -294,7 +540,7 @@ if sudo virsh -c "$URI" dominfo "$VM_NAME" >/dev/null 2>&1; then
     say "A VM named '$VM_NAME' already exists — it was left as it is."
     echo "Start it with:   virsh -c $URI start $VM_NAME"
     echo "Open its screen: virt-viewer -c $URI $VM_NAME"
-    echo "To recreate it, delete it first (see the bottom of this script)."
+    echo "To recreate it, delete it first:  $0 remove"
     exit 0
 fi
 
@@ -451,11 +697,12 @@ echo
 #   - Launch a different VM with it: edit the VM="..." line in
 #     ~/.local/bin/windows-vm
 #   - Open in a window instead of fullscreen: remove "-f" in that same file.
-#   - Change the keys or remove the shortcut: edit or delete the last
-#     "Windows VM" lines in ~/.config/hypr/conf/keybinds.lua
+#   - Change the keys: edit the last "Windows VM" lines in
+#     ~/.config/hypr/conf/keybinds.lua
 #     (the script saved the previous version next to it as keybinds.lua.bak).
 #
 # Delete a VM completely, including its disk (the shared folder is kept):
-#     virsh undefine NAME --nvram --remove-all-storage
-#   (leave out --nvram for win7). After that you can run this script again.
+#     ./setup-windows-vm.sh remove
+#   The same command removes the keyboard shortcut and can uninstall KVM
+#   itself. After deleting a VM you can run this script again to recreate it.
 ###############################################################################

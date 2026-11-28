@@ -3,7 +3,9 @@
 # kernel modules (built by dkms) and the Guest Additions ISO, and adds you to
 # the vboxusers group (USB passthrough).
 #
-# Usage: ./virtualbox.sh    (as your normal user; sudo asks for the password)
+# Usage: ./virtualbox.sh           install
+#        ./virtualbox.sh remove    uninstall again (see remove below)
+# Run it as your normal user; sudo asks for the password.
 # Safe to re-run: every step is skipped if already done.
 
 set -euo pipefail
@@ -11,14 +13,77 @@ set -euo pipefail
 # NOTE for editing: because of "pipefail", never write "command | grep -q"
 # (see kvm.sh). Use "command | grep ... >/dev/null" instead, as below.
 
+VBOX_PACKAGES=(virtualbox virtualbox-host-dkms virtualbox-guest-iso)
+
 info() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# --- remove ("./virtualbox.sh remove") ---------------------------------------
+
+# Undoes the install: the packages, the loaded kernel modules and the
+# vboxusers membership. Kept: your VMs (~/VirtualBox VMs), VirtualBox's
+# settings (~/.config/VirtualBox) and the kernel headers, which other dkms
+# modules may need.
+remove() {
+    local -a installed
+    local module loaded
+
+    if pgrep -x 'VirtualBoxVM|VBoxHeadless|VBoxSDL' >/dev/null; then
+        die "a VirtualBox VM is running - shut it down, then run this again"
+    fi
+
+    info "Uninstalling VirtualBox"
+    mapfile -t installed < <(pacman -Qq "${VBOX_PACKAGES[@]}" 2>/dev/null)
+    if (( ${#installed[@]} )); then
+        # -s also removes their dependencies that nothing else uses (dkms,
+        # for example), -n their config files.
+        sudo pacman -Rns --noconfirm "${installed[@]}"
+    else
+        echo "Not installed, skipping."
+    fi
+
+    # pacman leaves loaded modules loaded. The two network modules go first,
+    # because they use vboxdrv. rmmod, not modprobe -r: it still works now
+    # that the module files are gone.
+    info "Unloading the VirtualBox kernel modules"
+    loaded=0
+    for module in vboxnetflt vboxnetadp vboxdrv; do
+        [[ -d /sys/module/$module ]] || continue
+        loaded=1
+        if sudo rmmod "$module"; then
+            echo "Unloaded $module."
+        else
+            warn "$module is still loaded - it is gone after the next reboot"
+        fi
+    done
+    (( loaded )) || echo "None loaded, skipping."
+
+    info "Removing $USER from the vboxusers group"
+    if id -nG "$USER" | grep -w vboxusers >/dev/null; then
+        sudo gpasswd -d "$USER" vboxusers >/dev/null
+        echo "Removed. Takes effect after you log out and back in."
+    else
+        echo "Not a member, skipping."
+    fi
+
+    info "Done"
+    cat <<'EOF'
+Kept: your VMs (~/VirtualBox VMs), VirtualBox's settings
+(~/.config/VirtualBox) and the kernel headers.
+EOF
+}
 
 # --- preflight ---------------------------------------------------------------
 
 [[ $EUID -ne 0 ]] || die "run this as your normal user, not root (that user is the one added to vboxusers)"
 command -v pacman >/dev/null || die "pacman not found - this script is for Arch Linux"
+
+case "${1:-}" in
+    "")     ;;
+    remove) remove; exit 0 ;;
+    *)      die "unknown argument '$1' - run without arguments to install, or with: remove" ;;
+esac
 
 VIRT=$(systemd-detect-virt --vm 2>/dev/null) || VIRT=none
 if [[ $VIRT != none ]]; then
@@ -31,7 +96,7 @@ fi
 # dkms hook rebuilds them on kernel upgrades. dkms needs the headers of every
 # installed kernel. A headers package that is already installed is left alone,
 # so that it can't get ahead of its kernel.
-PACKAGES=(virtualbox virtualbox-host-dkms virtualbox-guest-iso)
+PACKAGES=("${VBOX_PACKAGES[@]}")
 for pkgbase in /usr/lib/modules/*/pkgbase; do
     [[ -f $pkgbase ]] || continue
     headers="$(<"$pkgbase")-headers"
